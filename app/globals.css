@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #f8fafc;
+  --card: #ffffff;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --muted: #64748b;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ── Risk banner colours ────────────────────────────────────────────── */
+.risk-low {
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  color: white;
+}
+.risk-moderate {
+  background: linear-gradient(135deg, #eab308 0%, #ca8a04 100%);
+  color: white;
+}
+.risk-high {
+  background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%);
+  color: white;
+}
+
+/* ── Metric card ────────────────────────────────────────────────────── */
+.metric-card {
+  @apply rounded-xl border border-slate-200 bg-white p-5 shadow-sm;
+}
+.metric-card .label {
+  @apply text-xs font-semibold uppercase tracking-wider text-slate-500;
+}
+.metric-card .value {
+  @apply mt-1 text-2xl font-bold text-slate-900;
+}
+
+/* ── Memo ───────────────────────────────────────────────────────────── */
+.memo-panel {
+  @apply rounded-xl border border-slate-200 bg-white p-6 shadow-sm;
+  white-space: pre-wrap;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+/* ── Print CSS ──────────────────────────────────────────────────────── */
+@media print {
+  /* Hide everything that's not the output */
+  .no-print,
+  .no-print * {
+    display: none !important;
+  }
+
+  body {
+    background: white;
+    font-size: 11pt;
+    line-height: 1.4;
+  }
+
+  .metric-card {
+    border: 1px solid #ccc;
+    box-shadow: none;
+    break-inside: avoid;
+  }
+
+  .risk-low,
+  .risk-moderate,
+  .risk-high {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .memo-panel {
+    border: 1px solid #ccc;
+    box-shadow: none;
+    page-break-before: always;
+  }
+}
