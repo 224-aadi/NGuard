@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   BarChart,
   Bar,
@@ -26,6 +26,17 @@ interface FormState {
   windMph: string;
 }
 
+interface CostBreakdown {
+  nLossLbs: number;
+  costPerLbN: number;
+  replacementCost: number;
+  reapplicationCost: number;
+  regulatoryExposure: number;
+  totalVarPerAcre: number;
+  fertilizerSource: string;
+  regulatorySource: string;
+}
+
 interface CalcResult {
   adjustedYield: number;
   baseN: number;
@@ -37,7 +48,18 @@ interface CalcResult {
   varNLoss95: number;
   varDollars: number;
   p95Rainfall: number;
+  leachProb95: number;
   rainSim: number[];
+  costBreakdown: CostBreakdown;
+}
+
+interface WeatherInfo {
+  locationName: string;
+  rainMm: number;
+  tempC: number;
+  windMph: number;
+  humidity: number;
+  fetchedAt: string;
 }
 
 // ── Defaults ──────────────────────────────────────────────────────────────
@@ -81,9 +103,18 @@ export default function Dashboard() {
   const [form, setForm] = useState<FormState>(defaultForm);
   const [result, setResult] = useState<CalcResult | null>(null);
   const [memo, setMemo] = useState<string>("");
+  const [memoSource, setMemoSource] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [memoLoading, setMemoLoading] = useState(false);
   const [error, setError] = useState<string>("");
+
+  // ── Weather state ──────────────────────────────────────────────────────
+  const [weather, setWeather] = useState<WeatherInfo | null>(null);
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [weatherError, setWeatherError] = useState("");
+  const [citySearch, setCitySearch] = useState("");
+  const [locationStatus, setLocationStatus] = useState<string>("Detecting location...");
+  const autoRanRef = useRef(false);
 
   // ── Input helpers ──────────────────────────────────────────────────────
   const set = useCallback(
@@ -108,6 +139,82 @@ export default function Dashboard() {
     [form]
   );
 
+  // ── Weather fetch ──────────────────────────────────────────────────────
+  const fetchWeatherByCoords = useCallback(async (lat: number, lon: number) => {
+    setWeatherLoading(true);
+    setWeatherError("");
+    try {
+      const res = await fetch("/api/weather", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lat, lon }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Weather fetch failed");
+      setWeather(data as WeatherInfo);
+      // Auto-fill forecast fields
+      setForm((prev) => ({
+        ...prev,
+        rainMm: String(data.rainMm),
+        tempC: String(data.tempC),
+        windMph: String(data.windMph),
+      }));
+      setLocationStatus(data.locationName || `${lat.toFixed(2)}, ${lon.toFixed(2)}`);
+    } catch (e: unknown) {
+      setWeatherError(e instanceof Error ? e.message : "Weather fetch failed");
+      setLocationStatus("Weather unavailable");
+    } finally {
+      setWeatherLoading(false);
+    }
+  }, []);
+
+  const fetchWeatherByCity = useCallback(async (city: string) => {
+    if (!city.trim()) return;
+    setWeatherLoading(true);
+    setWeatherError("");
+    try {
+      const res = await fetch("/api/weather", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ city }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Weather fetch failed");
+      setWeather(data as WeatherInfo);
+      setForm((prev) => ({
+        ...prev,
+        rainMm: String(data.rainMm),
+        tempC: String(data.tempC),
+        windMph: String(data.windMph),
+      }));
+      setLocationStatus(data.locationName || city);
+    } catch (e: unknown) {
+      setWeatherError(e instanceof Error ? e.message : "Weather fetch failed");
+      setLocationStatus("Weather unavailable");
+    } finally {
+      setWeatherLoading(false);
+    }
+  }, []);
+
+  // ── Auto-detect location on mount ──────────────────────────────────────
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setLocationStatus("Geolocation not supported — enter city below");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        fetchWeatherByCoords(pos.coords.latitude, pos.coords.longitude);
+      },
+      () => {
+        // Fallback: default to Fresno, CA (Central Valley agriculture hub)
+        setLocationStatus("Location denied — defaulting to Fresno, CA");
+        fetchWeatherByCoords(36.7378, -119.7871);
+      },
+      { timeout: 8000 }
+    );
+  }, [fetchWeatherByCoords]);
+
   // ── Run Analysis ───────────────────────────────────────────────────────
   const runAnalysis = useCallback(async () => {
     setLoading(true);
@@ -129,6 +236,18 @@ export default function Dashboard() {
     }
   }, [payload]);
 
+  // ── Auto-run analysis once weather arrives ─────────────────────────────
+  useEffect(() => {
+    if (weather && !autoRanRef.current) {
+      autoRanRef.current = true;
+      // Small delay so the form state settles after weather fill
+      const t = setTimeout(() => {
+        runAnalysis();
+      }, 300);
+      return () => clearTimeout(t);
+    }
+  }, [weather, runAnalysis]);
+
   // ── Generate Memo ──────────────────────────────────────────────────────
   const genMemo = useCallback(async () => {
     setMemoLoading(true);
@@ -142,6 +261,7 @@ export default function Dashboard() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Memo generation failed");
       setMemo(data.memo);
+      setMemoSource(data.source || "template");
       // Also refresh the calc result so numbers are in sync
       const res2 = await fetch("/api/calc", {
         method: "POST",
@@ -176,7 +296,7 @@ export default function Dashboard() {
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       {/* ── Title ─────────────────────────────────────────────────────── */}
-      <header className="mb-8 text-center no-print">
+      <header className="mb-6 text-center no-print">
         <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">
           🛡️ N-Guard: Forecast-Adjusted Nitrogen Compliance
         </h1>
@@ -184,6 +304,65 @@ export default function Dashboard() {
           CV-SALTS / ILRP Nitrate Risk Mitigation Engine
         </p>
       </header>
+
+      {/* ── Location / Weather Bar ────────────────────────────────────── */}
+      <div className="no-print mb-6 rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50 to-sky-50 p-4 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          {/* Location info */}
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-lg">📍</span>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-slate-700 truncate">
+                {weatherLoading ? "Fetching forecast..." : locationStatus}
+              </div>
+              {weather && (
+                <div className="text-xs text-slate-500">
+                  Live: {weather.tempC}°C · {weather.windMph} mph wind · {weather.rainMm} mm rain (48h) · {weather.humidity}% humidity
+                  <span className="ml-2 text-slate-400">
+                    Updated {new Date(weather.fetchedAt).toLocaleTimeString()}
+                  </span>
+                </div>
+              )}
+              {weatherError && (
+                <div className="text-xs text-red-500">{weatherError}</div>
+              )}
+            </div>
+          </div>
+
+          {/* City search */}
+          <div className="flex gap-2 shrink-0">
+            <input
+              type="text"
+              placeholder="Search city (e.g. Fresno)"
+              value={citySearch}
+              onChange={(e) => setCitySearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") fetchWeatherByCity(citySearch);
+              }}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm w-48 focus:border-blue-500 focus:ring-blue-500"
+            />
+            <button
+              onClick={() => fetchWeatherByCity(citySearch)}
+              disabled={weatherLoading || !citySearch.trim()}
+              className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
+            >
+              {weatherLoading ? "..." : "Fetch"}
+            </button>
+            <button
+              onClick={() => {
+                navigator.geolocation?.getCurrentPosition(
+                  (pos) => fetchWeatherByCoords(pos.coords.latitude, pos.coords.longitude),
+                  () => setWeatherError("Location access denied")
+                );
+              }}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+              title="Use my location"
+            >
+              📍 GPS
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* ── Input Panel (3-column) ────────────────────────────────────── */}
       <section className="no-print mb-8 grid gap-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:grid-cols-3">
@@ -304,15 +483,20 @@ export default function Dashboard() {
           </label>
         </div>
 
-        {/* Col 3: Forecast */}
+        {/* Col 3: Forecast (auto-filled, editable) */}
         <div className="space-y-4">
           <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400">
             Forecast
+            {weather && (
+              <span className="ml-2 inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-medium text-green-700 normal-case tracking-normal">
+                LIVE
+              </span>
+            )}
           </h2>
 
           <label className="block">
             <span className="text-xs font-medium text-slate-600">
-              Rain (mm)
+              Rain (mm) — 48h forecast
             </span>
             <input
               type="number"
@@ -410,6 +594,48 @@ export default function Dashboard() {
             </div>
           </div>
 
+          {/* Cost Breakdown */}
+          <div className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-slate-400">
+              Economic Exposure Breakdown (per acre, 95th percentile)
+            </h3>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-lg bg-slate-50 p-3">
+                <div className="text-[10px] font-semibold uppercase text-slate-400">N Replacement</div>
+                <div className="mt-1 text-lg font-bold text-slate-800">
+                  ${result.costBreakdown.replacementCost.toFixed(2)}
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  {result.costBreakdown.nLossLbs.toFixed(1)} lbs × ${result.costBreakdown.costPerLbN.toFixed(2)}/lb
+                </div>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <div className="text-[10px] font-semibold uppercase text-slate-400">Re-Application</div>
+                <div className="mt-1 text-lg font-bold text-slate-800">
+                  ${result.costBreakdown.reapplicationCost.toFixed(2)}
+                </div>
+                <div className="text-[10px] text-slate-500">Custom rate survey</div>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <div className="text-[10px] font-semibold uppercase text-slate-400">Regulatory Risk</div>
+                <div className="mt-1 text-lg font-bold text-amber-700">
+                  ${result.costBreakdown.regulatoryExposure.toFixed(2)}
+                </div>
+                <div className="text-[10px] text-slate-500">Expected penalty (ILRP)</div>
+              </div>
+              <div className="rounded-lg bg-blue-50 border border-blue-200 p-3">
+                <div className="text-[10px] font-semibold uppercase text-blue-500">Total VaR</div>
+                <div className="mt-1 text-lg font-extrabold text-blue-800">
+                  ${result.costBreakdown.totalVarPerAcre.toFixed(2)}/acre
+                </div>
+                <div className="text-[10px] text-blue-500">95th percentile scenario</div>
+              </div>
+            </div>
+            <div className="mt-3 text-[10px] text-slate-400">
+              Sources: {result.costBreakdown.fertilizerSource} · {result.costBreakdown.regulatorySource}
+            </div>
+          </div>
+
           {/* Risk Banner */}
           <div
             className={`mb-6 rounded-xl p-5 shadow-md ${riskClass}`}
@@ -499,8 +725,24 @@ export default function Dashboard() {
 
       {/* ── Memo Panel ────────────────────────────────────────────────── */}
       {memo && (
-        <div className="memo-panel" id="memo-section">
-          {memo}
+        <div id="memo-section">
+          <div className="no-print mb-2 flex items-center gap-2">
+            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400">
+              Compliance Memo
+            </h3>
+            {memoSource === "ai-enhanced" ? (
+              <span className="inline-flex items-center rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-medium text-purple-700">
+                AI-Enhanced
+              </span>
+            ) : (
+              <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                Template
+              </span>
+            )}
+          </div>
+          <div className="memo-panel">
+            {memo}
+          </div>
         </div>
       )}
     </div>

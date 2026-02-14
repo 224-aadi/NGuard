@@ -3,6 +3,12 @@
 // CV-SALTS / ILRP Nitrate Risk Mitigation Calculator
 // ═══════════════════════════════════════════════════════════════════════════
 
+import {
+  computeCostBreakdown,
+  FERTILIZER_ECONOMICS,
+  type CostBreakdown,
+} from "./economics";
+
 // ── Constants ──────────────────────────────────────────────────────────────
 export const CROP_COEFF: Record<string, number> = {
   Corn: 1.2,
@@ -48,7 +54,9 @@ export interface NGuardOutputs {
   varNLoss95: number;
   varDollars: number;
   p95Rainfall: number;
+  leachProb95: number;
   rainSim: number[];
+  costBreakdown: CostBreakdown;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -175,7 +183,14 @@ export function computeNGuard(inputs: NGuardInputs): NGuardOutputs {
   const rawRisk95 = (1 - soilRet) * (p95Rainfall * 0.5) * irrMult;
   const leachProb95 = sigmoid(0.2 * (rawRisk95 - 15));
   const varNLoss95 = adjustedN * leachProb95;
-  const varDollars = varNLoss95 * 0.6;
+
+  // ── Real cost breakdown (replaces hardcoded $0.60) ───────────────────
+  const costBreakdown = computeCostBreakdown(
+    fertilizerForm,
+    varNLoss95,
+    leachProb95,
+  );
+  const varDollars = costBreakdown.totalVarPerAcre;
 
   return {
     adjustedYield,
@@ -188,11 +203,13 @@ export function computeNGuard(inputs: NGuardInputs): NGuardOutputs {
     varNLoss95,
     varDollars,
     p95Rainfall,
+    leachProb95,
     rainSim,
+    costBreakdown,
   };
 }
 
-// ── Memo Generator ────────────────────────────────────────────────────────
+// ── Memo Generator (template — always works, no API needed) ──────────────
 export function generateMemo(
   inputs: NGuardInputs,
   outputs: NGuardOutputs
@@ -203,7 +220,10 @@ export function generateMemo(
     day: "numeric",
   });
 
-  const riskColor =
+  const cb = outputs.costBreakdown;
+  const fert = FERTILIZER_ECONOMICS[inputs.fertilizerForm];
+
+  const riskLabel =
     outputs.riskCategory === "High Liability"
       ? "HIGH LIABILITY"
       : outputs.riskCategory === "Moderate"
@@ -216,7 +236,7 @@ Date: ${today}
 To: California Regional Water Quality Control Board
 From: N-Guard Automated Compliance System
 Re: Nitrogen Management Risk Assessment — ${inputs.crop} Operation
-Classification: ${riskColor}
+Classification: ${riskLabel}
 
 ---
 
@@ -242,21 +262,42 @@ The computed leaching probability is ${(outputs.leachingProb * 100).toFixed(1)}%
 
 ${outputs.airborneFlag ? `AIRBORNE NITROGEN RISK
 
-WARNING: The assessment has identified a ${outputs.airborneFlag} condition. ${outputs.airborneFlag === "High Drift Risk" ? "The combination of Liquid UAN (Spray) application and wind speeds exceeding 10 mph creates an unacceptable risk of spray drift, potentially impacting adjacent parcels and water bodies." : "The combination of Dry Urea (Broadcast) application, elevated temperatures (>" + "25°C), high wind speeds (>8 mph), and minimal rainfall (<5 mm) creates conditions favorable for ammonia volatilization, leading to airborne nitrogen losses and potential air quality violations."} Immediate mitigation is required.
+WARNING: The assessment has identified a ${outputs.airborneFlag} condition. ${outputs.airborneFlag === "High Drift Risk" ? "The combination of Liquid UAN (Spray) application and wind speeds exceeding 10 mph creates an unacceptable risk of spray drift, potentially impacting adjacent parcels and water bodies." : "The combination of Dry Urea (Broadcast) application, elevated temperatures (>25°C), high wind speeds (>8 mph), and minimal rainfall (<5 mm) creates conditions favorable for ammonia volatilization, leading to airborne nitrogen losses and potential air quality violations."} Immediate mitigation is required.
 
 ` : ""}MONTE CARLO VALUE-AT-RISK ANALYSIS
 
-A 1,000-iteration Monte Carlo simulation was conducted to quantify financial exposure under rainfall variability (normal distribution, mean = ${inputs.rainMm.toFixed(1)} mm, σ = 10 mm). The 95th percentile rainfall scenario yields ${outputs.p95Rainfall.toFixed(1)} mm of precipitation. Under this stress scenario, the estimated nitrogen loss is ${outputs.varNLoss95.toFixed(2)} lbs/acre, translating to a Value-at-Risk (VaR) of $${outputs.varDollars.toFixed(2)}/acre at current nitrogen replacement costs ($0.60/lb).
+A 1,000-iteration Monte Carlo simulation was conducted to quantify financial exposure under rainfall variability (normal distribution, mean = ${inputs.rainMm.toFixed(1)} mm, σ = 10 mm). The 95th percentile rainfall scenario yields ${outputs.p95Rainfall.toFixed(1)} mm of precipitation. Under this stress scenario, the estimated nitrogen loss is ${outputs.varNLoss95.toFixed(2)} lbs/acre.
+
+ECONOMIC EXPOSURE BREAKDOWN (per acre, 95th percentile scenario)
+
+  Fertilizer product:      ${fert?.productName ?? inputs.fertilizerForm}
+  N content:               ${((fert?.nContentPct ?? 0.32) * 100).toFixed(0)}%
+  Market price:            $${(fert?.pricePerTon ?? 320).toFixed(0)}/ton (${cb.fertilizerSource})
+  Cost per lb N:           $${cb.costPerLbN.toFixed(2)}/lb
+
+  N lost (p95):            ${cb.nLossLbs.toFixed(2)} lbs/acre
+  Replacement cost:        $${cb.replacementCost.toFixed(2)}/acre  (${cb.nLossLbs.toFixed(2)} lbs × $${cb.costPerLbN.toFixed(2)}/lb)
+  Re-application cost:     $${cb.reapplicationCost.toFixed(2)}/acre  (custom rate, ${fert?.productName ?? "broadcast"})
+  Regulatory exposure:     $${cb.regulatoryExposure.toFixed(2)}/acre  (expected penalty, ${cb.regulatorySource})
+  ─────────────────────────────────────
+  TOTAL VaR (95%):         $${cb.totalVarPerAcre.toFixed(2)}/acre
 
 COMPLIANCE DIRECTIVE
 
-Based on the foregoing analysis, this operation is classified as: **${riskColor}**
+Based on the foregoing analysis, this operation is classified as: **${riskLabel}**
 
 Recommended action: **${outputs.directive}**
 
-${outputs.riskCategory === "High Liability" ? "The operator MUST implement split application protocols or HALT all nitrogen application until conditions improve. Failure to comply may result in enforcement action under the ILRP and potential fines under the Porter-Cologne Water Quality Control Act." : outputs.riskCategory === "Moderate" ? "The operator is advised to delay application or implement a 50/50 split-application strategy to reduce leaching exposure. Continued monitoring of weather forecasts is recommended before proceeding." : "Current conditions support the planned nitrogen application. The operator should maintain standard record-keeping and monitoring protocols as required under the ILRP General Order."}
+${outputs.riskCategory === "High Liability" ? "The operator MUST implement split application protocols or HALT all nitrogen application until conditions improve. Failure to comply may result in enforcement action under the ILRP and potential fines under the Porter-Cologne Water Quality Control Act (Cal. Water Code §13350, up to $10,000/day per violation)." : outputs.riskCategory === "Moderate" ? "The operator is advised to delay application or implement a 50/50 split-application strategy to reduce leaching exposure. Continued monitoring of weather forecasts is recommended before proceeding." : "Current conditions support the planned nitrogen application. The operator should maintain standard record-keeping and monitoring protocols as required under the ILRP General Order."}
 
-This assessment was generated by N-Guard v0.1.0, an automated compliance tool. Results should be verified by a certified Crop Adviser (CCA) or qualified agronomist before implementation.
+DATA SOURCES
+
+• Fertilizer pricing: ${cb.fertilizerSource}
+• Regulatory framework: ${cb.regulatorySource}
+• Weather data: Open-Meteo API (open-meteo.com), no affiliation
+• Crop N coefficients: University of California Cooperative Extension / CDFA guidelines
+
+This assessment was generated by N-Guard v0.2.0, an automated compliance tool. Results should be verified by a certified Crop Adviser (CCA) or qualified agronomist before implementation.
 
 ---
 N-Guard Automated Compliance System | CV-SALTS/ILRP Framework | ${today}`;
