@@ -23,10 +23,10 @@ export interface WeatherData {
 }
 
 // ── Geocoding: city name → coordinates ────────────────────────────────────
-// Priority: California > other US states > international
-// This is a CV-SALTS tool — California results should always win.
+// Works worldwide. If query contains a state/country hint (e.g. "Davis, California"
+// or "Paris, France"), the Open-Meteo API handles it naturally.
+// For single-word ambiguous queries, we sort by population (largest city wins).
 export async function geocodeCity(query: string): Promise<GeoResult | null> {
-  // Request more results so we have a good pool to pick from
   const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=10&language=en&format=json`;
   const res = await fetch(url);
   if (!res.ok) return null;
@@ -43,55 +43,39 @@ export async function geocodeCity(query: string): Promise<GeoResult | null> {
     population?: number;
   }>;
 
-  // 1. Prefer California results (CV-SALTS context)
-  const california = results.find(
-    (r) => r.country_code === "US" && r.admin1 === "California"
+  // If query has a comma (e.g. "Davis, California" or "London, UK"),
+  // try to match the second part against admin1 or country
+  const parts = query.split(",").map((s) => s.trim().toLowerCase());
+  if (parts.length >= 2) {
+    const hint = parts.slice(1).join(" ");
+    const hintMatch = results.find(
+      (r) =>
+        r.admin1?.toLowerCase().includes(hint) ||
+        r.country?.toLowerCase().includes(hint) ||
+        r.country_code?.toLowerCase() === hint
+    );
+    if (hintMatch) {
+      return {
+        name: hintMatch.name,
+        admin1: hintMatch.admin1,
+        country: hintMatch.country,
+        latitude: hintMatch.latitude,
+        longitude: hintMatch.longitude,
+      };
+    }
+  }
+
+  // Otherwise, pick the result with the largest population (most likely what they mean)
+  const sorted = [...results].sort(
+    (a, b) => (b.population ?? 0) - (a.population ?? 0)
   );
-  if (california) {
-    return {
-      name: california.name,
-      admin1: california.admin1,
-      country: california.country,
-      latitude: california.latitude,
-      longitude: california.longitude,
-    };
-  }
-
-  // 2. Prefer other Central Valley / western US ag states
-  const agStates = ["Arizona", "Oregon", "Washington", "Nevada", "Idaho", "Colorado", "Texas"];
-  const westernAg = results.find(
-    (r) => r.country_code === "US" && agStates.includes(r.admin1 ?? "")
-  );
-  if (westernAg) {
-    return {
-      name: westernAg.name,
-      admin1: westernAg.admin1,
-      country: westernAg.country,
-      latitude: westernAg.latitude,
-      longitude: westernAg.longitude,
-    };
-  }
-
-  // 3. Any US result
-  const us = results.find((r) => r.country_code === "US");
-  if (us) {
-    return {
-      name: us.name,
-      admin1: us.admin1,
-      country: us.country,
-      latitude: us.latitude,
-      longitude: us.longitude,
-    };
-  }
-
-  // 4. Fallback: first result
-  const first = results[0];
+  const best = sorted[0];
   return {
-    name: first.name,
-    admin1: first.admin1,
-    country: first.country,
-    latitude: first.latitude,
-    longitude: first.longitude,
+    name: best.name,
+    admin1: best.admin1,
+    country: best.country,
+    latitude: best.latitude,
+    longitude: best.longitude,
   };
 }
 
@@ -100,7 +84,7 @@ export async function reverseGeocode(lat: number, lon: number): Promise<string> 
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=10`;
     const res = await fetch(url, {
-      headers: { "User-Agent": "NGuard-CV-SALTS/0.2 (compliance tool)" },
+      headers: { "User-Agent": "NGuard/1.0 (nitrogen risk analysis)" },
     });
     if (res.ok) {
       const data = await res.json();

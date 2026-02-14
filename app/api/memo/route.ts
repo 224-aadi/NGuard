@@ -56,15 +56,15 @@ async function enhanceWithGroq(
     airborneFlag: string | null;
   }
 ): Promise<string | null> {
-  const systemPrompt = `You are an agricultural compliance analyst writing for the California Regional Water Quality Control Board. You specialize in CV-SALTS and ILRP nitrogen management.
+  const systemPrompt = `You are an agricultural compliance analyst specializing in nitrogen management and nutrient runoff risk assessment.
 
-Your task: take the following template-generated compliance memo and rewrite it into polished, professional prose. You MUST:
+Your task: take the following template-generated nitrogen risk assessment memo and rewrite it into polished, professional prose. You MUST:
 - Preserve ALL numerical values, calculations, cost breakdowns, and data EXACTLY as given
 - Keep the economic breakdown table formatted exactly as-is
 - Improve prose quality, flow, and professional tone
-- Add relevant California Water Code citations where appropriate
+- Add relevant regulatory citations where appropriate (Clean Water Act, state nutrient management laws)
 - Maintain the same section structure
-- Make it suitable for a regulatory filing
+- Make it suitable for a regulatory filing or compliance documentation
 
 Output ONLY the rewritten memo text. No commentary, no preamble.`;
 

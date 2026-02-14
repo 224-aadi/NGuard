@@ -16,12 +16,11 @@
  * 3. Application cost: USDA-ERS custom rate surveys
  *    Liquid spray: ~$8-12/acre  |  Broadcast dry: ~$5-8/acre
  *
- * 4. California ILRP regulatory penalties:
- *    - Porter-Cologne Water Quality Control Act §13350:
- *      Up to $10,000/day per violation for waste discharge
- *    - CV-SALTS Nitrogen Management Plan violations:
- *      $1,000-$5,000 first offense, escalating
- *    - We model a probabilistic "expected penalty" = P(violation) × avg fine
+ * 4. Regulatory penalty model:
+ *    - Modeled as a probabilistic "expected penalty" = P(violation) × avg fine
+ *    - Based on typical environmental compliance enforcement patterns
+ *    - Average first-offense fine: $2,500 (common across US state water boards)
+ *    - Applicable to Clean Water Act, state nutrient management programs, etc.
  */
 
 // ── Fertilizer price per lb of actual N ──────────────────────────────────
@@ -38,16 +37,16 @@ export const FERTILIZER_ECONOMICS: Record<string, FertilizerEconomics> = {
   "Liquid UAN (Spray)": {
     productName: "UAN-32 Solution",
     nContentPct: 0.32,
-    pricePerTon: 320,        // mid-range 2024-25
-    costPerLbN: 0.50,        // $320/ton ÷ 2000 lbs ÷ 0.32 = $0.50/lb N
+    pricePerTon: 320,
+    costPerLbN: 0.50,
     applicationCostPerAcre: 10.00,
     source: "USDA-AMS / Illinois Extension Weekly Fertilizer Review (2024-25 avg)",
   },
   "Dry Urea (Broadcast)": {
     productName: "Urea 46-0-0",
     nContentPct: 0.46,
-    pricePerTon: 470,        // mid-range 2024-25
-    costPerLbN: 0.51,        // $470/ton ÷ 2000 lbs ÷ 0.46 = $0.51/lb N
+    pricePerTon: 470,
+    costPerLbN: 0.51,
     applicationCostPerAcre: 6.50,
     source: "USDA-AMS / Illinois Extension Weekly Fertilizer Review (2024-25 avg)",
   },
@@ -55,7 +54,7 @@ export const FERTILIZER_ECONOMICS: Record<string, FertilizerEconomics> = {
 
 // ── Regulatory penalty model ─────────────────────────────────────────────
 export interface RegulatoryExposure {
-  expectedPenaltyPerAcre: number;  // $/acre weighted by P(violation)
+  expectedPenaltyPerAcre: number;
   maxPenaltyPerDay: number;
   framework: string;
   citation: string;
@@ -64,14 +63,13 @@ export interface RegulatoryExposure {
 /**
  * Estimate expected regulatory penalty based on leaching probability.
  *
- * Logic:
- * - If leachingProb > 0.7 → "likely violation" → P(enforcement) ≈ 0.15
- * - If leachingProb 0.3-0.7 → "possible" → P(enforcement) ≈ 0.05
- * - If leachingProb < 0.3 → "unlikely" → P(enforcement) ≈ 0.005
+ * Probabilistic model:
+ * - leachingProb >= 0.7 → P(enforcement) ≈ 0.15
+ * - leachingProb 0.3-0.7 → P(enforcement) ≈ 0.05
+ * - leachingProb < 0.3 → P(enforcement) ≈ 0.005
  *
- * Average first-offense fine: $2,500 (CV-SALTS NMP violation)
- * Assume avg affected acreage per citation: 40 acres
- * Per-acre expected penalty = P(enforcement) × $2,500 / 40
+ * Average first-offense fine: $2,500 (typical US state water board)
+ * Average affected acreage per citation: 40 acres
  */
 export function estimateRegulatoryExposure(leachingProb: number): RegulatoryExposure {
   let pEnforcement: number;
@@ -90,28 +88,19 @@ export function estimateRegulatoryExposure(leachingProb: number): RegulatoryExpo
   return {
     expectedPenaltyPerAcre: Math.round(expectedPenaltyPerAcre * 100) / 100,
     maxPenaltyPerDay: 10000,
-    framework: "CV-SALTS / ILRP Nitrogen Management Plan",
-    citation: "Cal. Water Code §13350; CV-SALTS Phase II NMP Requirements",
+    framework: "Nutrient Management / Water Quality Compliance",
+    citation: "Clean Water Act §402; state nutrient management regulations",
   };
 }
 
 // ── Full VaR cost breakdown ──────────────────────────────────────────────
 export interface CostBreakdown {
-  // Direct N replacement
-  nLossLbs: number;           // lbs N lost at p95
-  costPerLbN: number;         // $/lb from fertilizer type
-  replacementCost: number;    // nLossLbs × costPerLbN
-
-  // Application cost to re-apply
+  nLossLbs: number;
+  costPerLbN: number;
+  replacementCost: number;
   reapplicationCost: number;
-
-  // Regulatory
   regulatoryExposure: number;
-
-  // Total
   totalVarPerAcre: number;
-
-  // Sourcing
   fertilizerSource: string;
   regulatorySource: string;
 }

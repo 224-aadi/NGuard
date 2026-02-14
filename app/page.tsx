@@ -117,7 +117,7 @@ export default function Dashboard() {
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState("");
   const [cityInput, setCityInput] = useState("");
-  const [stateInput, setStateInput] = useState("California");
+  const [stateInput, setStateInput] = useState("");
   const [locationStatus, setLocationStatus] = useState<string>("Detecting location...");
   const [coords, setCoords] = useState<{ lat: number; lon: number }>({ lat: 36.7378, lon: -119.7871 });
   const autoRanRef = useRef(false);
@@ -203,7 +203,7 @@ export default function Dashboard() {
     navigator.geolocation.getCurrentPosition(
       (pos) => fetchWeatherByCoords(pos.coords.latitude, pos.coords.longitude),
       () => {
-        setLocationStatus("Location denied — defaulting to Fresno, CA");
+        setLocationStatus("Location denied — using default");
         fetchWeatherByCoords(36.7378, -119.7871);
       },
       { timeout: 8000 }
@@ -270,6 +270,14 @@ export default function Dashboard() {
 
   const exportPDF = useCallback(() => window.print(), []);
 
+  // ── Map click → fetch weather at clicked point ─────────────────────────
+  const handleMapClick = useCallback(
+    (clickLat: number, clickLon: number) => {
+      fetchWeatherByCoords(clickLat, clickLon);
+    },
+    [fetchWeatherByCoords]
+  );
+
   const histData = result ? buildHistogram(result.rainSim, 30) : [];
   const riskClass = result
     ? result.riskCategory === "High Liability"
@@ -287,10 +295,10 @@ export default function Dashboard() {
       {/* ── Title ─────────────────────────────────────────────────────── */}
       <header className="mb-6 text-center no-print">
         <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">
-          🛡️ N-Guard: Forecast-Adjusted Nitrogen Compliance
+          🛡️ N-Guard: Nitrogen Risk Analysis
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          CV-SALTS / ILRP Nitrate Risk Mitigation Engine
+          Agricultural Nitrogen Management & Compliance Engine
         </p>
       </header>
 
@@ -323,7 +331,7 @@ export default function Dashboard() {
             <div className="flex gap-2">
               <input
                 type="text"
-                placeholder="City (e.g. Davis)"
+                placeholder="City (e.g. Davis, Paris, Tokyo)"
                 value={cityInput}
                 onChange={(e) => setCityInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -333,13 +341,13 @@ export default function Dashboard() {
               />
               <input
                 type="text"
-                placeholder="State"
+                placeholder="State / Country (optional)"
                 value={stateInput}
                 onChange={(e) => setStateInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") fetchWeatherByCity(cityInput, stateInput);
                 }}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm w-32 focus:border-blue-500 focus:ring-blue-500"
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm w-44 focus:border-blue-500 focus:ring-blue-500"
               />
               <button
                 onClick={() => fetchWeatherByCity(cityInput, stateInput)}
@@ -363,14 +371,19 @@ export default function Dashboard() {
             </div>
 
             <div className="text-[10px] text-slate-400">
-              {coords.lat.toFixed(4)}°N, {Math.abs(coords.lon).toFixed(4)}°W · Geocoding prioritizes California (CV-SALTS region)
+              {coords.lat.toFixed(4)}, {coords.lon.toFixed(4)} · Type a city, use GPS, or click/drag on the map
             </div>
           </div>
         </div>
 
-        {/* Map */}
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden" style={{ minHeight: "200px" }}>
-          <LocationMap lat={coords.lat} lon={coords.lon} locationName={locationStatus} />
+        {/* Map — click anywhere to select a location */}
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden" style={{ minHeight: "240px" }}>
+          <LocationMap
+            lat={coords.lat}
+            lon={coords.lon}
+            locationName={locationStatus}
+            onMapClick={handleMapClick}
+          />
         </div>
       </div>
 
@@ -578,7 +591,7 @@ export default function Dashboard() {
                 <div className="mt-1 text-lg font-bold text-amber-700">
                   ${result.costBreakdown.regulatoryExposure.toFixed(2)}
                 </div>
-                <div className="text-[10px] text-slate-500">Expected penalty (ILRP)</div>
+                <div className="text-[10px] text-slate-500">Expected penalty (regulatory)</div>
               </div>
               <div className="rounded-lg bg-blue-50 border border-blue-200 p-3">
                 <div className="text-[10px] font-semibold uppercase text-blue-500">Per-Acre VaR</div>
