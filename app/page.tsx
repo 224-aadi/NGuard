@@ -2,16 +2,6 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ReferenceLine,
-  ResponsiveContainer,
-  Cell,
-} from "recharts";
 
 const LocationMap = dynamic(() => import("@/components/LocationMap"), {
   ssr: false,
@@ -51,12 +41,8 @@ interface CalcResult {
   riskCategory: "Low" | "Moderate" | "High Liability";
   adjustedN: number;
   directive: string;
-  varNLoss95: number;
   varDollars: number;
   totalFieldExposure: number;
-  p95Rainfall: number;
-  leachProb95: number;
-  rainSim: number[];
   costBreakdown: CostBreakdown;
 }
 
@@ -82,25 +68,7 @@ const defaultForm: FormState = {
   irrigation: "Sprinkler",
 };
 
-// ── Histogram helper ──────────────────────────────────────────────────────
-function buildHistogram(data: number[], bins: number) {
-  if (data.length === 0) return [];
-  const min = Math.min(...data);
-  const max = Math.max(...data);
-  const binWidth = (max - min) / bins || 1;
-  const hist = Array.from({ length: bins }, (_, i) => ({
-    binStart: min + i * binWidth,
-    binLabel: (min + (i + 0.5) * binWidth).toFixed(1),
-    count: 0,
-  }));
-  for (const v of data) {
-    let idx = Math.floor((v - min) / binWidth);
-    if (idx >= bins) idx = bins - 1;
-    if (idx < 0) idx = 0;
-    hist[idx].count++;
-  }
-  return hist;
-}
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 export default function Dashboard() {
@@ -121,6 +89,10 @@ export default function Dashboard() {
   const [locationStatus, setLocationStatus] = useState<string>("Detecting location...");
   const [coords, setCoords] = useState<{ lat: number; lon: number }>({ lat: 36.7378, lon: -119.7871 });
   const autoRanRef = useRef(false);
+  // Streams / waterways lookup
+  const [streams, setStreams] = useState<{ id: number; name: string; distanceMeters: number; estNlbs?: number }[]>([]);
+  const [streamsLoading, setStreamsLoading] = useState(false);
+  const runoffFraction = 0.3; // default fraction of leached N reaching surface water
 
   // ── Helpers ────────────────────────────────────────────────────────────
   const set = useCallback(
@@ -240,6 +212,42 @@ export default function Dashboard() {
     }
   }, [weather, runAnalysis]);
 
+  // Fetch nearby streams when we have a result and coords
+  useEffect(() => {
+    if (!result || !coords) return;
+    let cancelled = false;
+    (async () => {
+      setStreamsLoading(true);
+      try {
+        const res = await fetch(`/api/streams?lat=${coords.lat}&lon=${coords.lon}&radius=5000`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Streams lookup failed');
+
+        const features = data.features || [];
+        const acreage = parseFloat(form.acreage) || 0;
+        const totalLossLbs = (result.costBreakdown.nLossLbs || 0) * acreage;
+        const runoffToSurface = totalLossLbs * runoffFraction;
+
+        const weights = features.map((f: any) => 1 / (f.distanceMeters || 1));
+        const sumW = weights.reduce((s: number, v: number) => s + v, 0) || 1;
+
+        const annotated = features.map((f: any, i: number) => ({
+          id: f.id,
+          name: f.name || 'unnamed',
+          distanceMeters: Math.round(f.distanceMeters),
+          estNlbs: Math.round((runoffToSurface * (weights[i] / sumW)) * 100) / 100,
+        }));
+
+        if (!cancelled) setStreams(annotated);
+      } catch (e: unknown) {
+        setStreams([]);
+      } finally {
+        if (!cancelled) setStreamsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [result, coords, form.acreage]);
+
   // ── Generate Memo ──────────────────────────────────────────────────────
   const genMemo = useCallback(async () => {
     setMemoLoading(true);
@@ -278,7 +286,7 @@ export default function Dashboard() {
     [fetchWeatherByCoords]
   );
 
-  const histData = result ? buildHistogram(result.rainSim, 30) : [];
+
   const riskClass = result
     ? result.riskCategory === "High Liability"
       ? "risk-high"
@@ -542,6 +550,11 @@ export default function Dashboard() {
           {/* Metric Cards */}
           <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             <div className="metric-card">
+              <div className="label">Estimated N Leached (lbs/acre)</div>
+              <div className="value text-red-700">{result.costBreakdown.nLossLbs.toFixed(2)}</div>
+              <div className="text-[10px] text-slate-500 mt-0.5">Total: {(result.costBreakdown.nLossLbs * (parseFloat(form.acreage) || 0)).toFixed(0)} lbs</div>
+            </div>
+            <div className="metric-card">
               <div className="label">Base N (lbs/acre)</div>
               <div className="value">{result.baseN.toFixed(2)}</div>
             </div>
@@ -554,20 +567,43 @@ export default function Dashboard() {
               <div className="value">{(result.leachingProb * 100).toFixed(1)}%</div>
             </div>
             <div className="metric-card">
-              <div className="label">VaR 95% ($/acre)</div>
+              <div className="label">Estimated Exposure ($/acre)</div>
               <div className="value text-amber-700">${result.varDollars.toFixed(2)}</div>
             </div>
-            <div className="metric-card">
-              <div className="label">Total Field Exposure</div>
-              <div className="value text-red-700">${result.totalFieldExposure.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-              <div className="text-[10px] text-slate-500 mt-0.5">{parseFloat(form.acreage) || 0} acres</div>
-            </div>
+          </div>
+
+          {/* Nearby Streams (surface water exposure) */}
+          <div className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-slate-400">
+              Nearby Streams & Estimated N Input
+            </h3>
+            {streamsLoading ? (
+              <div className="text-sm text-slate-500">Looking up waterways near the selected location...</div>
+            ) : streams.length === 0 ? (
+              <div className="text-sm text-slate-500">No nearby streams found within 5 km.</div>
+            ) : (
+              <div className="grid gap-2">
+                {streams.map((s) => (
+                  <div key={s.id} className="flex items-center justify-between rounded-md border border-slate-100 bg-slate-50 p-2">
+                    <div>
+                      <div className="text-sm font-medium text-slate-700">{s.name}</div>
+                      <div className="text-[11px] text-slate-500">{(s.distanceMeters/1000).toFixed(2)} km away</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-bold text-red-700">{(s.estNlbs || 0).toFixed(2)} lbs</div>
+                      <div className="text-[11px] text-slate-500">Estimated to stream</div>
+                    </div>
+                  </div>
+                ))}
+                <div className="text-[11px] text-slate-500">Assumes {Math.round(runoffFraction*100)}% of leached N reaches surface waters; distributed by proximity.</div>
+              </div>
+            )}
           </div>
 
           {/* Cost Breakdown */}
           <div className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-slate-400">
-              Economic Exposure Breakdown (95th percentile)
+              Economic Exposure Breakdown
             </h3>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
               <div className="rounded-lg bg-slate-50 p-3">
@@ -594,11 +630,11 @@ export default function Dashboard() {
                 <div className="text-[10px] text-slate-500">Expected penalty (regulatory)</div>
               </div>
               <div className="rounded-lg bg-blue-50 border border-blue-200 p-3">
-                <div className="text-[10px] font-semibold uppercase text-blue-500">Per-Acre VaR</div>
+                <div className="text-[10px] font-semibold uppercase text-blue-500">Per-Acre Exposure</div>
                 <div className="mt-1 text-lg font-extrabold text-blue-800">
                   ${result.costBreakdown.totalVarPerAcre.toFixed(2)}
                 </div>
-                <div className="text-[10px] text-blue-500">95th percentile</div>
+                <div className="text-[10px] text-blue-500">Estimated</div>
               </div>
               <div className="rounded-lg bg-red-50 border border-red-200 p-3">
                 <div className="text-[10px] font-semibold uppercase text-red-500">Total Field</div>
@@ -632,38 +668,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Histogram */}
-          <div className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-slate-400">
-              Monte Carlo Rainfall Simulation (1,000 iterations)
-            </h3>
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={histData} margin={{ top: 10, right: 20, bottom: 20, left: 10 }}>
-                <XAxis
-                  dataKey="binLabel"
-                  tick={{ fontSize: 10 }}
-                  label={{ value: "Rainfall (mm)", position: "insideBottom", offset: -10, style: { fontSize: 11, fill: "#64748b" } }}
-                />
-                <YAxis
-                  tick={{ fontSize: 10 }}
-                  label={{ value: "Frequency", angle: -90, position: "insideLeft", offset: 10, style: { fontSize: 11, fill: "#64748b" } }}
-                />
-                <Tooltip formatter={(val: number) => [val, "Count"]} labelFormatter={(l) => `~${l} mm`} />
-                <Bar dataKey="count" radius={[3, 3, 0, 0]}>
-                  {histData.map((entry, i) => (
-                    <Cell key={i} fill={parseFloat(entry.binLabel) >= result.p95Rainfall ? "#ef4444" : "#3b82f6"} />
-                  ))}
-                </Bar>
-                <ReferenceLine
-                  x={histData.find((h) => parseFloat(h.binLabel) >= result.p95Rainfall)?.binLabel}
-                  stroke="#dc2626"
-                  strokeWidth={2}
-                  strokeDasharray="6 3"
-                  label={{ value: `p95 = ${result.p95Rainfall.toFixed(1)} mm`, position: "top", style: { fontSize: 11, fontWeight: 700, fill: "#dc2626" } }}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+
         </div>
       )}
 

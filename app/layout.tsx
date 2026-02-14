@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "N-Guard: Nitrogen Risk Analysis & Compliance",
   description:
-    "Agricultural nitrogen management — risk assessment, leaching probability, Monte Carlo VaR, and compliance memo generator.",
+    "Agricultural nitrogen management — risk assessment, leaching probability, and compliance memo generator.",
 };
 
 export default function RootLayout({

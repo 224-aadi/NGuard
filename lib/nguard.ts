@@ -52,12 +52,8 @@ export interface NGuardOutputs {
   riskCategory: "Low" | "Moderate" | "High Liability";
   adjustedN: number;
   directive: string;
-  varNLoss95: number;
   varDollars: number;          // per acre
   totalFieldExposure: number;  // varDollars × acreage
-  p95Rainfall: number;
-  leachProb95: number;
-  rainSim: number[];
   costBreakdown: CostBreakdown;
 }
 
@@ -162,22 +158,10 @@ export function computeNGuard(inputs: NGuardInputs): NGuardOutputs {
     directive = "Proceed as planned";
   }
 
-  // ── Monte Carlo VaR ──────────────────────────────────────────────────
-  const N_SIM = 1000;
-  const rainSim: number[] = [];
-  for (let i = 0; i < N_SIM; i++) {
-    rainSim.push(Math.max(0, normalRandom(rainMm, 10)));
-  }
-  rainSim.sort((a, b) => a - b);
+  // ── Economic exposure ────────────────────────────────────────────────
+  const varNLoss = adjustedN * leachingProb;
 
-  const p95Index = Math.floor(N_SIM * 0.95);
-  const p95Rainfall = rainSim[p95Index];
-
-  const rawRisk95 = (1 - soilRet) * (p95Rainfall * 0.5) * irrMult;
-  const leachProb95 = sigmoid(0.2 * (rawRisk95 - 15));
-  const varNLoss95 = adjustedN * leachProb95;
-
-  const costBreakdown = computeCostBreakdown(fertilizerForm, varNLoss95, leachProb95);
+  const costBreakdown = computeCostBreakdown(fertilizerForm, varNLoss, leachingProb);
   const varDollars = costBreakdown.totalVarPerAcre;
   const totalFieldExposure = Math.round(varDollars * acreage * 100) / 100;
 
@@ -188,12 +172,8 @@ export function computeNGuard(inputs: NGuardInputs): NGuardOutputs {
     riskCategory,
     adjustedN,
     directive,
-    varNLoss95,
     varDollars,
     totalFieldExposure,
-    p95Rainfall,
-    leachProb95,
-    rainSim,
     costBreakdown,
   };
 }
@@ -254,23 +234,19 @@ ${outputs.airborneFlag ? `AIRBORNE NITROGEN RISK
 
 WARNING: The assessment has identified a ${outputs.airborneFlag} condition. ${outputs.airborneFlag === "High Drift Risk" ? "The combination of Liquid UAN (Spray) application and wind speeds exceeding 10 mph creates an unacceptable risk of spray drift, potentially impacting adjacent parcels and water bodies." : "The combination of Dry Urea (Broadcast) application, elevated temperatures (>25°C), high wind speeds (>8 mph), and minimal rainfall (<5 mm) creates conditions favorable for ammonia volatilization, leading to airborne nitrogen losses and potential air quality violations."} Immediate mitigation is required.
 
-` : ""}MONTE CARLO VALUE-AT-RISK ANALYSIS
-
-A 1,000-iteration Monte Carlo simulation was conducted to quantify financial exposure under rainfall variability (normal distribution, mean = ${inputs.rainMm.toFixed(1)} mm, σ = 10 mm). The 95th percentile rainfall scenario yields ${outputs.p95Rainfall.toFixed(1)} mm of precipitation. Under this stress scenario, the estimated nitrogen loss is ${outputs.varNLoss95.toFixed(2)} lbs/acre.
-
-ECONOMIC EXPOSURE BREAKDOWN (95th percentile scenario)
+` : ""}ECONOMIC EXPOSURE BREAKDOWN
 
   Fertilizer product:      ${fert?.productName ?? inputs.fertilizerForm}
   N content:               ${((fert?.nContentPct ?? 0.32) * 100).toFixed(0)}%
   Market price:            $${(fert?.pricePerTon ?? 320).toFixed(0)}/ton (${cb.fertilizerSource})
   Cost per lb N:           $${cb.costPerLbN.toFixed(2)}/lb
 
-  N lost (p95):            ${cb.nLossLbs.toFixed(2)} lbs/acre
+  N lost:                  ${cb.nLossLbs.toFixed(2)} lbs/acre
   Replacement cost:        $${cb.replacementCost.toFixed(2)}/acre  (${cb.nLossLbs.toFixed(2)} lbs × $${cb.costPerLbN.toFixed(2)}/lb)
   Re-application cost:     $${cb.reapplicationCost.toFixed(2)}/acre  (custom rate, ${fert?.productName ?? "broadcast"})
   Regulatory exposure:     $${cb.regulatoryExposure.toFixed(2)}/acre  (expected penalty, ${cb.regulatorySource})
   ─────────────────────────────────────
-  PER-ACRE VaR (95%):      $${cb.totalVarPerAcre.toFixed(2)}/acre
+  PER-ACRE EXPOSURE:       $${cb.totalVarPerAcre.toFixed(2)}/acre
   TOTAL FIELD EXPOSURE:    $${outputs.totalFieldExposure.toFixed(2)} (${inputs.acreage.toFixed(0)} acres × $${cb.totalVarPerAcre.toFixed(2)}/acre)
 
 RECOMMENDED ACTION
