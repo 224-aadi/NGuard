@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 import { validateInputs, computeNGuard, generateMemo } from "@/lib/nguard";
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
+// Groq: free tier, no credit card, OpenAI-compatible API
+// Sign up at https://console.groq.com → get free API key
+const GROQ_API_KEY = process.env.GROQ_API_KEY ?? "";
 
 /**
  * POST /api/memo
  *
  * Always generates a template-based compliance memo.
- * If OPENAI_API_KEY is set, optionally enhances it with GPT-4o-mini
- * for more natural language and deeper regulatory analysis.
+ * If GROQ_API_KEY is set in .env.local, enhances with Llama 3.3 70B (free).
  */
 export async function POST(request: Request) {
   try {
@@ -16,13 +17,13 @@ export async function POST(request: Request) {
     const inputs = validateInputs(raw);
     const outputs = computeNGuard(inputs);
 
-    // 1. Always generate the template memo (zero-dependency baseline)
+    // 1. Template memo (always works, zero dependencies)
     const templateMemo = generateMemo(inputs, outputs);
 
-    // 2. If OpenAI key is available, enhance with LLM
-    if (OPENAI_API_KEY) {
+    // 2. If Groq key is available, enhance with LLM
+    if (GROQ_API_KEY) {
       try {
-        const enhanced = await enhanceWithLLM(templateMemo, inputs, outputs);
+        const enhanced = await enhanceWithGroq(templateMemo, inputs, outputs);
         if (enhanced) {
           return NextResponse.json({
             memo: enhanced,
@@ -44,37 +45,44 @@ export async function POST(request: Request) {
   }
 }
 
-// ── LLM Enhancement ──────────────────────────────────────────────────────
-async function enhanceWithLLM(
+// ── Groq LLM Enhancement (free tier — Llama 3.3 70B) ────────────────────
+async function enhanceWithGroq(
   templateMemo: string,
   inputs: { crop: string; soil: string; fertilizerForm: string },
-  outputs: { riskCategory: string; leachingProb: number; varDollars: number; airborneFlag: string | null },
+  outputs: {
+    riskCategory: string;
+    leachingProb: number;
+    varDollars: number;
+    airborneFlag: string | null;
+  }
 ): Promise<string | null> {
   const systemPrompt = `You are an agricultural compliance analyst writing for the California Regional Water Quality Control Board. You specialize in CV-SALTS and ILRP nitrogen management.
 
-Your task: take the following template-generated compliance memo and rewrite it into polished, professional prose. Preserve ALL numerical values, calculations, and data exactly as given. Do not invent numbers. Improve:
-- Prose quality and flow
-- Regulatory citations (add relevant CA Water Code sections where appropriate)
-- Professional tone suitable for a regulatory filing
-- Clear section structure
+Your task: take the following template-generated compliance memo and rewrite it into polished, professional prose. You MUST:
+- Preserve ALL numerical values, calculations, cost breakdowns, and data EXACTLY as given
+- Keep the economic breakdown table formatted exactly as-is
+- Improve prose quality, flow, and professional tone
+- Add relevant California Water Code citations where appropriate
+- Maintain the same section structure
+- Make it suitable for a regulatory filing
 
-Keep the same sections. Keep the economic breakdown table formatted exactly. Output only the memo text, no commentary.`;
+Output ONLY the rewritten memo text. No commentary, no preamble.`;
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      Authorization: `Bearer ${GROQ_API_KEY}`,
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model: "llama-3.3-70b-versatile",
       temperature: 0.3,
-      max_tokens: 3000,
+      max_tokens: 4000,
       messages: [
         { role: "system", content: systemPrompt },
         {
           role: "user",
-          content: `Here is the template memo to enhance:\n\n${templateMemo}\n\nAdditional context:\n- Crop: ${inputs.crop}\n- Soil: ${inputs.soil}\n- Fertilizer: ${inputs.fertilizerForm}\n- Risk: ${outputs.riskCategory}\n- Leaching probability: ${(outputs.leachingProb * 100).toFixed(1)}%\n- VaR: $${outputs.varDollars.toFixed(2)}/acre\n- Airborne flag: ${outputs.airborneFlag || "none"}`,
+          content: `Here is the template memo to enhance:\n\n${templateMemo}\n\nContext:\n- Crop: ${inputs.crop}\n- Soil: ${inputs.soil}\n- Fertilizer: ${inputs.fertilizerForm}\n- Risk: ${outputs.riskCategory}\n- Leaching probability: ${(outputs.leachingProb * 100).toFixed(1)}%\n- VaR: $${outputs.varDollars.toFixed(2)}/acre\n- Airborne flag: ${outputs.airborneFlag || "none"}`,
         },
       ],
     }),

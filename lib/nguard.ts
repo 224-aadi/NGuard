@@ -9,12 +9,14 @@ import {
   type CostBreakdown,
 } from "./economics";
 
-// ── Constants ──────────────────────────────────────────────────────────────
+// ── Constants (yield in TONS) ────────────────────────────────────────────
+// lbs N required per ton of crop yield
+// Sources: UC Cooperative Extension, CDFA Nitrogen Management guidelines
 export const CROP_COEFF: Record<string, number> = {
-  Corn: 1.2,
-  Wheat: 1.5,
-  Almonds: 0.068,
-  Lettuce: 1.8,
+  Corn: 40,       // ~1.2 lbs N/bu × 33 bu/ton
+  Wheat: 70,      // ~2.1 lbs N/bu × 33 bu/ton
+  Almonds: 100,   // UC ANR Publication 3364
+  Lettuce: 160,   // UC Davis Vegetable Research
 };
 
 export const SOIL_RETENTION: Record<string, number> = {
@@ -32,19 +34,18 @@ export const IRRIGATION_MULTIPLIER: Record<string, number> = {
 // ── Types ─────────────────────────────────────────────────────────────────
 export interface NGuardInputs {
   crop: string;
-  plannedYield: number;
-  prevN: number;
+  plannedYield: number;   // tons/acre
+  acreage: number;        // total field acres
+  prevN: number;          // lbs/acre previously applied
   fertilizerForm: string; // "Liquid UAN (Spray)" | "Dry Urea (Broadcast)"
   soil: string;
   irrigation: string;
-  ndvi: number;
   rainMm: number;
   tempC: number;
   windMph: number;
 }
 
 export interface NGuardOutputs {
-  adjustedYield: number;
   baseN: number;
   leachingProb: number;
   airborneFlag: string | null;
@@ -52,7 +53,8 @@ export interface NGuardOutputs {
   adjustedN: number;
   directive: string;
   varNLoss95: number;
-  varDollars: number;
+  varDollars: number;          // per acre
+  totalFieldExposure: number;  // varDollars × acreage
   p95Rainfall: number;
   leachProb95: number;
   rainSim: number[];
@@ -64,18 +66,12 @@ function sigmoid(x: number): number {
   return 1 / (1 + Math.exp(-x));
 }
 
-/** Box-Muller transform for normal random variate */
 function normalRandom(mean: number, std: number): number {
-  let u = 0,
-    v = 0;
+  let u = 0, v = 0;
   while (u === 0) u = Math.random();
   while (v === 0) v = Math.random();
   const z = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
   return mean + z * std;
-}
-
-function clamp(val: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, val));
 }
 
 // ── Validation ────────────────────────────────────────────────────────────
@@ -98,8 +94,8 @@ export function validateInputs(raw: Record<string, unknown>): NGuardInputs {
     throw new Error(`Unknown fertilizer form: ${fertilizerForm}`);
 
   const plannedYield = Math.max(0, Number(raw.plannedYield) || 0);
+  const acreage = Math.max(0, Number(raw.acreage) || 0);
   const prevN = Math.max(0, Number(raw.prevN) || 0);
-  const ndvi = clamp(Number(raw.ndvi) ?? 0.8, 0, 1);
   const rainMm = Math.max(0, Number(raw.rainMm) || 0);
   const tempC = Number(raw.tempC) || 0;
   const windMph = Math.max(0, Number(raw.windMph) || 0);
@@ -107,11 +103,11 @@ export function validateInputs(raw: Record<string, unknown>): NGuardInputs {
   return {
     crop,
     plannedYield,
+    acreage,
     prevN,
     fertilizerForm,
     soil,
     irrigation,
-    ndvi,
     rainMm,
     tempC,
     windMph,
@@ -120,17 +116,15 @@ export function validateInputs(raw: Record<string, unknown>): NGuardInputs {
 
 // ── Core Computation ──────────────────────────────────────────────────────
 export function computeNGuard(inputs: NGuardInputs): NGuardOutputs {
-  const { crop, plannedYield, prevN, fertilizerForm, soil, irrigation, ndvi, rainMm, tempC, windMph } = inputs;
+  const { crop, plannedYield, acreage, prevN, fertilizerForm, soil, irrigation, rainMm, tempC, windMph } = inputs;
 
   const cropCoef = CROP_COEFF[crop];
   const soilRet = SOIL_RETENTION[soil];
   const irrMult = IRRIGATION_MULTIPLIER[irrigation];
 
-  // ── Sensing adjustment ───────────────────────────────────────────────
-  const adjustedYield = ndvi < 0.5 ? plannedYield * 0.85 : plannedYield;
-
-  // ── Base demand ──────────────────────────────────────────────────────
-  const baseN = Math.max(0, adjustedYield * cropCoef - prevN * soilRet);
+  // ── Base demand (lbs N / acre) ─────────────────────────────────────────
+  // plannedYield is tons/acre, cropCoef is lbs N per ton
+  const baseN = Math.max(0, plannedYield * cropCoef - prevN * soilRet);
 
   // ── Leaching probability ─────────────────────────────────────────────
   const rawRisk = (1 - soilRet) * (rainMm * 0.5) * irrMult;
@@ -179,21 +173,15 @@ export function computeNGuard(inputs: NGuardInputs): NGuardOutputs {
   const p95Index = Math.floor(N_SIM * 0.95);
   const p95Rainfall = rainSim[p95Index];
 
-  // Compute leaching at p95 rainfall
   const rawRisk95 = (1 - soilRet) * (p95Rainfall * 0.5) * irrMult;
   const leachProb95 = sigmoid(0.2 * (rawRisk95 - 15));
   const varNLoss95 = adjustedN * leachProb95;
 
-  // ── Real cost breakdown (replaces hardcoded $0.60) ───────────────────
-  const costBreakdown = computeCostBreakdown(
-    fertilizerForm,
-    varNLoss95,
-    leachProb95,
-  );
+  const costBreakdown = computeCostBreakdown(fertilizerForm, varNLoss95, leachProb95);
   const varDollars = costBreakdown.totalVarPerAcre;
+  const totalFieldExposure = Math.round(varDollars * acreage * 100) / 100;
 
   return {
-    adjustedYield,
     baseN,
     leachingProb,
     airborneFlag,
@@ -202,6 +190,7 @@ export function computeNGuard(inputs: NGuardInputs): NGuardOutputs {
     directive,
     varNLoss95,
     varDollars,
+    totalFieldExposure,
     p95Rainfall,
     leachProb95,
     rainSim,
@@ -209,7 +198,7 @@ export function computeNGuard(inputs: NGuardInputs): NGuardOutputs {
   };
 }
 
-// ── Memo Generator (template — always works, no API needed) ──────────────
+// ── Memo Generator ────────────────────────────────────────────────────────
 export function generateMemo(
   inputs: NGuardInputs,
   outputs: NGuardOutputs
@@ -235,26 +224,28 @@ export function generateMemo(
 Date: ${today}
 To: California Regional Water Quality Control Board
 From: N-Guard Automated Compliance System
-Re: Nitrogen Management Risk Assessment — ${inputs.crop} Operation
+Re: Nitrogen Management Risk Assessment — ${inputs.crop} Operation (${inputs.acreage.toFixed(0)} acres)
 Classification: ${riskLabel}
 
 ---
 
 EXECUTIVE SUMMARY
 
-This memorandum presents the findings of an automated nitrogen risk assessment conducted under the Central Valley Salinity Alternatives for Long-Term Sustainability (CV-SALTS) and Irrigated Lands Regulatory Program (ILRP) framework. The analysis evaluates the planned nitrogen application for a ${inputs.crop} field with a target yield of ${inputs.plannedYield.toFixed(1)} units under current forecast and environmental conditions.
+This memorandum presents the findings of an automated nitrogen risk assessment conducted under the Central Valley Salinity Alternatives for Long-Term Sustainability (CV-SALTS) and Irrigated Lands Regulatory Program (ILRP) framework. The analysis evaluates the planned nitrogen application for a ${inputs.acreage.toFixed(0)}-acre ${inputs.crop} field with a target yield of ${inputs.plannedYield.toFixed(1)} tons/acre under current forecast and environmental conditions.
 
 FIELD AND ENVIRONMENTAL CONDITIONS
 
-The subject parcel is characterized by ${inputs.soil} soil (retention factor: ${SOIL_RETENTION[inputs.soil].toFixed(2)}) under ${inputs.irrigation} irrigation (system multiplier: ${IRRIGATION_MULTIPLIER[inputs.irrigation].toFixed(1)}x). Current Normalized Difference Vegetation Index (NDVI) remote sensing data indicates a canopy reflectance value of ${inputs.ndvi.toFixed(2)}.${inputs.ndvi < 0.5 ? " Because NDVI is below the 0.50 stress threshold, planned yield has been reduced by 15% to account for observed crop stress, resulting in an adjusted yield of " + outputs.adjustedYield.toFixed(1) + " units." : ""} The operator has reported ${inputs.prevN.toFixed(1)} lbs/acre of previously applied nitrogen using ${inputs.fertilizerForm}.
+The subject parcel comprises ${inputs.acreage.toFixed(0)} acres characterized by ${inputs.soil} soil (retention factor: ${SOIL_RETENTION[inputs.soil].toFixed(2)}) under ${inputs.irrigation} irrigation (system multiplier: ${IRRIGATION_MULTIPLIER[inputs.irrigation].toFixed(1)}x). The operator has reported ${inputs.prevN.toFixed(1)} lbs/acre of previously applied nitrogen using ${inputs.fertilizerForm}.
 
 FORECAST CONDITIONS
 
-Current meteorological forecasts indicate ${inputs.rainMm.toFixed(1)} mm of expected rainfall, ambient temperatures of ${inputs.tempC.toFixed(1)}°C, and wind speeds of ${inputs.windMph.toFixed(1)} mph. These parameters are critical inputs for both leaching probability estimation and airborne nitrogen loss risk evaluation.
+Live meteorological data indicates ${inputs.rainMm.toFixed(1)} mm of forecast precipitation (48h), ambient temperatures of ${inputs.tempC.toFixed(1)}°C, and wind speeds of ${inputs.windMph.toFixed(1)} mph. These parameters are critical inputs for both leaching probability estimation and airborne nitrogen loss risk evaluation. Weather data sourced from Open-Meteo API in real time.
 
 NITROGEN DEMAND ANALYSIS
 
-Based on crop-specific coefficients (${CROP_COEFF[inputs.crop]} lbs N per unit yield for ${inputs.crop}), the base nitrogen demand is calculated at ${outputs.baseN.toFixed(2)} lbs/acre. After applying risk-based adjustments for the assessed ${outputs.riskCategory} classification, the recommended adjusted nitrogen application rate is ${outputs.adjustedN.toFixed(2)} lbs/acre, representing a ${outputs.riskCategory === "Low" ? "0%" : outputs.riskCategory === "Moderate" ? "10%" : "20%"} reduction from baseline demand.
+Based on crop-specific coefficients (${CROP_COEFF[inputs.crop]} lbs N per ton of yield for ${inputs.crop}), the base nitrogen demand is calculated at ${outputs.baseN.toFixed(2)} lbs/acre. After applying risk-based adjustments for the assessed ${outputs.riskCategory} classification, the recommended adjusted nitrogen application rate is ${outputs.adjustedN.toFixed(2)} lbs/acre, representing a ${outputs.riskCategory === "Low" ? "0%" : outputs.riskCategory === "Moderate" ? "10%" : "20%"} reduction from baseline demand.
+
+Total field nitrogen requirement: ${(outputs.adjustedN * inputs.acreage).toFixed(0)} lbs across ${inputs.acreage.toFixed(0)} acres.
 
 LEACHING RISK ASSESSMENT
 
@@ -268,7 +259,7 @@ WARNING: The assessment has identified a ${outputs.airborneFlag} condition. ${ou
 
 A 1,000-iteration Monte Carlo simulation was conducted to quantify financial exposure under rainfall variability (normal distribution, mean = ${inputs.rainMm.toFixed(1)} mm, σ = 10 mm). The 95th percentile rainfall scenario yields ${outputs.p95Rainfall.toFixed(1)} mm of precipitation. Under this stress scenario, the estimated nitrogen loss is ${outputs.varNLoss95.toFixed(2)} lbs/acre.
 
-ECONOMIC EXPOSURE BREAKDOWN (per acre, 95th percentile scenario)
+ECONOMIC EXPOSURE BREAKDOWN (95th percentile scenario)
 
   Fertilizer product:      ${fert?.productName ?? inputs.fertilizerForm}
   N content:               ${((fert?.nContentPct ?? 0.32) * 100).toFixed(0)}%
@@ -280,7 +271,8 @@ ECONOMIC EXPOSURE BREAKDOWN (per acre, 95th percentile scenario)
   Re-application cost:     $${cb.reapplicationCost.toFixed(2)}/acre  (custom rate, ${fert?.productName ?? "broadcast"})
   Regulatory exposure:     $${cb.regulatoryExposure.toFixed(2)}/acre  (expected penalty, ${cb.regulatorySource})
   ─────────────────────────────────────
-  TOTAL VaR (95%):         $${cb.totalVarPerAcre.toFixed(2)}/acre
+  PER-ACRE VaR (95%):      $${cb.totalVarPerAcre.toFixed(2)}/acre
+  TOTAL FIELD EXPOSURE:    $${outputs.totalFieldExposure.toFixed(2)} (${inputs.acreage.toFixed(0)} acres × $${cb.totalVarPerAcre.toFixed(2)}/acre)
 
 COMPLIANCE DIRECTIVE
 
@@ -294,10 +286,10 @@ DATA SOURCES
 
 • Fertilizer pricing: ${cb.fertilizerSource}
 • Regulatory framework: ${cb.regulatorySource}
-• Weather data: Open-Meteo API (open-meteo.com), no affiliation
-• Crop N coefficients: University of California Cooperative Extension / CDFA guidelines
+• Weather data: Open-Meteo API (open-meteo.com), live forecast at time of analysis
+• Crop N coefficients: University of California Cooperative Extension / CDFA guidelines (lbs N per ton yield)
 
-This assessment was generated by N-Guard v0.2.0, an automated compliance tool. Results should be verified by a certified Crop Adviser (CCA) or qualified agronomist before implementation.
+This assessment was generated by N-Guard v0.3.0, an automated compliance tool. Results should be verified by a certified Crop Adviser (CCA) or qualified agronomist before implementation.
 
 ---
 N-Guard Automated Compliance System | CV-SALTS/ILRP Framework | ${today}`;
