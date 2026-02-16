@@ -8,6 +8,7 @@ import WeatherWidget from "@/components/dashboard/WeatherWidget";
 import InputForm from "@/components/dashboard/InputForm";
 import ResultsPanel from "@/components/dashboard/ResultsPanel";
 import MemoPanel from "@/components/dashboard/MemoPanel";
+import InsightsPanel from "@/components/dashboard/InsightsPanel";
 
 const LocationMap = dynamic(() => import("@/components/LocationMap"), {
   ssr: false,
@@ -34,6 +35,9 @@ export default function Dashboard() {
   const [result, setResult] = useState<CalcResult | null>(null);
   const [memo, setMemo] = useState<string>("");
   const [memoSource, setMemoSource] = useState<string>("");
+  const [insights, setInsights] = useState<string>("");
+  const [insightsSource, setInsightsSource] = useState<string>("");
+  const [insightsLoading, setInsightsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [memoLoading, setMemoLoading] = useState(false);
   const [error, setError] = useState<string>("");
@@ -142,17 +146,42 @@ export default function Dashboard() {
   // ── Run Analysis ───────────────────────────────────────────────────────
   const runAnalysis = useCallback(async () => {
     setLoading(true);
+    setInsightsLoading(true);
     setError("");
+    const payloadData = payload();
     try {
       const res = await fetch("/api/calc", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload()),
+        body: JSON.stringify(payloadData),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Calculation failed");
       setResult(data as CalcResult);
       setMemo("");
+
+      try {
+        const insightsRes = await fetch("/api/insights", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            inputs: payloadData,
+            outputs: data,
+            weather: weather ?? undefined,
+          }),
+        });
+        const insightsData = await insightsRes.json();
+        if (insightsRes.ok) {
+          setInsights(insightsData.insights || "");
+          setInsightsSource(insightsData.source || "template");
+        } else {
+          setInsights("");
+          setInsightsSource("");
+        }
+      } catch {
+        setInsights("");
+        setInsightsSource("");
+      }
 
       // smooth scroll to results
       setTimeout(() => {
@@ -164,8 +193,9 @@ export default function Dashboard() {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
       setLoading(false);
+      setInsightsLoading(false);
     }
-  }, [payload]);
+  }, [payload, weather]);
 
   // ── Auto-run once weather arrives ──────────────────────────────────────
   useEffect(() => {
@@ -327,6 +357,18 @@ export default function Dashboard() {
               streams={streams}
               streamsLoading={streamsLoading}
               acreage={form.acreage}
+              soil={form.soil}
+              irrigation={form.irrigation}
+              rainMm={weather?.rainMm ?? 0}
+              windMph={weather?.windMph ?? 0}
+            />
+          )}
+
+          {result && (
+            <InsightsPanel
+              insights={insights}
+              source={insightsSource}
+              loading={insightsLoading}
             />
           )}
 

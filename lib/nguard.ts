@@ -159,7 +159,10 @@ export function computeNGuard(inputs: NGuardInputs): NGuardOutputs {
   }
 
   // ── Economic exposure ────────────────────────────────────────────────
-  const varNLoss = adjustedN * leachingProb;
+  // Include previously applied N that is still vulnerable to loss.
+  // Without this, low planned yield can drive adjustedN to 0 and suppress all estimates.
+  const residualPrevNAtRisk = Math.max(0, prevN * (1 - soilRet));
+  const varNLoss = (adjustedN + residualPrevNAtRisk) * leachingProb;
 
   const costBreakdown = computeCostBreakdown(fertilizerForm, varNLoss, leachingProb);
   const varDollars = costBreakdown.totalVarPerAcre;

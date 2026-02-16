@@ -28,11 +28,11 @@ export default function InputForm({
                 {/* Field Details */}
                 <div className="space-y-4">
                     <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100 pb-2 mb-4">
-                        Field Details
+                        Field Setup
                     </h2>
 
                     <div>
-                        <label className="block text-xs font-semibold text-slate-600 mb-1">Crop Type</label>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Crop</label>
                         <select
                             value={form.crop}
                             onChange={(e) => onChange("crop", e.target.value)}
@@ -43,11 +43,14 @@ export default function InputForm({
                             <option>Almonds</option>
                             <option>Lettuce</option>
                         </select>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                            Choose the crop you are planning to fertilize.
+                        </p>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-xs font-semibold text-slate-600 mb-1">Yield Target (tons/acre)</label>
+                            <label className="block text-xs font-semibold text-slate-600 mb-1">Expected Yield (tons/acre)</label>
                             <input
                                 type="number"
                                 min="0"
@@ -56,9 +59,12 @@ export default function InputForm({
                                 onChange={(e) => onChange("plannedYield", e.target.value)}
                                 className={inputClass}
                             />
+                            <p className="text-[10px] text-slate-400 mt-1">
+                                Expected harvest level for this field.
+                            </p>
                         </div>
                         <div>
-                            <label className="block text-xs font-semibold text-slate-600 mb-1">Field Size (acres)</label>
+                            <label className="block text-xs font-semibold text-slate-600 mb-1">Field Area (acres)</label>
                             <input
                                 type="number"
                                 min="0"
@@ -71,7 +77,7 @@ export default function InputForm({
                     </div>
 
                     <div>
-                        <label className="block text-xs font-semibold text-slate-600 mb-1">Previous N Applied (lbs/acre)</label>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Nitrogen Already Applied (lbs/acre)</label>
                         <input
                             type="number"
                             min="0"
@@ -79,10 +85,13 @@ export default function InputForm({
                             onChange={(e) => onChange("prevN", e.target.value)}
                             className={inputClass}
                         />
+                        <p className="text-[10px] text-slate-400 mt-1">
+                            Enter N already on the field before this decision.
+                        </p>
                     </div>
 
                     <div>
-                        <label className="block text-xs font-semibold text-slate-600 mb-1">Fertilizer Application Method</label>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Application Method</label>
                         <select
                             value={form.fertilizerForm}
                             onChange={(e) => onChange("fertilizerForm", e.target.value)}
@@ -97,11 +106,11 @@ export default function InputForm({
                 {/* Environmental Factors */}
                 <div className="space-y-4">
                     <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100 pb-2 mb-4">
-                        Environment
+                        Field Conditions
                     </h2>
 
                     <div>
-                        <label className="block text-xs font-semibold text-slate-600 mb-1">Soil Type</label>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Soil</label>
                         <select
                             value={form.soil}
                             onChange={(e) => onChange("soil", e.target.value)}
@@ -112,12 +121,12 @@ export default function InputForm({
                             <option>Sandy</option>
                         </select>
                         <p className="text-[10px] text-slate-400 mt-1">
-                            Soil texture affects leaching potential.
+                            Soil affects how quickly nitrogen moves downward.
                         </p>
                     </div>
 
                     <div>
-                        <label className="block text-xs font-semibold text-slate-600 mb-1">Irrigation System</label>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Irrigation</label>
                         <select
                             value={form.irrigation}
                             onChange={(e) => onChange("irrigation", e.target.value)}
@@ -128,7 +137,7 @@ export default function InputForm({
                             <option>Flood</option>
                         </select>
                         <p className="text-[10px] text-slate-400 mt-1">
-                            Water delivery method impacts runoff.
+                            Water method changes runoff and loss risk.
                         </p>
                     </div>
 
@@ -138,7 +147,7 @@ export default function InputForm({
                                 <span>🌱 Live Weather Integration</span>
                             </div>
                             <p className="text-xs text-green-800 leading-relaxed">
-                                Real-time weather data (rain: {weather.rainMm}mm) is automatically factored into the leaching model.
+                                Real-time weather data (rain: {weather.rainMm}mm) is included automatically in risk and penalty estimates.
                             </p>
                         </div>
                     )}
@@ -161,7 +170,7 @@ export default function InputForm({
                             Running Analysis...
                         </span>
                     ) : (
-                        "Run Risk Analysis"
+                        "Calculate Risk + Cost"
                     )}
                 </button>
 

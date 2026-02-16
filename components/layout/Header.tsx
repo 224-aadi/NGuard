@@ -10,7 +10,7 @@ export default function Header() {
                 N-Guard
             </h1>
             <p className="text-lg text-slate-600 font-medium max-w-2xl mx-auto">
-                Nitrogen Risk Analysis & Compliance Engine
+                Nitrogen decision support for practical field planning
             </p>
         </header>
     );

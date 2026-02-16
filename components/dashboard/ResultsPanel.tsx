@@ -6,6 +6,10 @@ interface ResultsPanelProps {
     streams: StreamFeature[];
     streamsLoading: boolean;
     acreage: string;
+    soil: string;
+    irrigation: string;
+    rainMm: number;
+    windMph: number;
 }
 
 export default function ResultsPanel({
@@ -13,12 +17,17 @@ export default function ResultsPanel({
     streams,
     streamsLoading,
     acreage,
+    soil,
+    irrigation,
+    rainMm,
+    windMph,
 }: ResultsPanelProps) {
     const riskClass = result.riskCategory === "High Liability"
         ? "risk-high"
         : result.riskCategory === "Moderate"
             ? "risk-moderate"
             : "risk-low";
+    const enforcementProbability = result.leachingProb >= 0.7 ? 0.15 : result.leachingProb >= 0.3 ? 0.05 : 0.005;
 
     return (
         <div id="results-section" className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -48,27 +57,27 @@ export default function ResultsPanel({
             {/* Metric Cards Grid */}
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
                 <div className="metric-card bg-white hover:border-blue-300 transition-colors">
-                    <div className="label">Est. N Leached</div>
+                    <div className="label">N Likely Lost</div>
                     <div className="value text-red-600">{result.costBreakdown.nLossLbs.toFixed(2)} <span className="text-sm font-normal text-slate-400">lbs/acre</span></div>
                     <div className="text-[10px] text-slate-400 mt-1">Total: {(result.costBreakdown.nLossLbs * (parseFloat(acreage) || 0)).toFixed(0)} lbs</div>
                 </div>
                 <div className="metric-card bg-white hover:border-blue-300 transition-colors">
-                    <div className="label">Base N Recom.</div>
+                    <div className="label">Crop Need (Base N)</div>
                     <div className="value text-slate-700">{result.baseN.toFixed(0)} <span className="text-sm font-normal text-slate-400">lbs/acre</span></div>
                 </div>
                 <div className="metric-card bg-white hover:border-blue-300 transition-colors">
-                    <div className="label">Adjusted N</div>
+                    <div className="label">Suggested N Rate</div>
                     <div className="value text-blue-600">{result.adjustedN.toFixed(0)} <span className="text-sm font-normal text-slate-400">lbs/acre</span></div>
                 </div>
                 <div className="metric-card bg-white hover:border-blue-300 transition-colors">
-                    <div className="label">Leaching Prob.</div>
+                    <div className="label">Loss Chance</div>
                     <div className="value text-slate-700">{(result.leachingProb * 100).toFixed(1)}%</div>
                     <div className="w-full bg-slate-100 rounded-full h-1.5 mt-2">
                         <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${result.leachingProb * 100}%` }}></div>
                     </div>
                 </div>
                 <div className="metric-card bg-white hover:border-blue-300 transition-colors">
-                    <div className="label">Exposure Risk</div>
+                    <div className="label">Estimated Cost Risk</div>
                     <div className="value text-amber-600">${result.varDollars.toFixed(2)} <span className="text-sm font-normal text-slate-400">/acre</span></div>
                 </div>
             </div>
@@ -77,7 +86,7 @@ export default function ResultsPanel({
                 {/* Cost Breakdown */}
                 <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
                     <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100 pb-2">
-                        Economic Breakdown
+                        Cost Breakdown
                     </h3>
                     <div className="space-y-3">
                         <div className="flex justify-between items-center p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors">
@@ -103,7 +112,7 @@ export default function ResultsPanel({
                         <div className="flex justify-between items-center p-3 rounded-lg bg-red-50 hover:bg-red-100 transition-colors border border-red-100">
                             <div>
                                 <div className="text-xs font-semibold text-red-600 uppercase">Regulatory Risk</div>
-                                <div className="text-xs text-red-400">Potential penalties</div>
+                                <div className="text-xs text-red-400">Expected penalty cost</div>
                             </div>
                             <div className="text-lg font-bold text-red-700">
                                 ${result.costBreakdown.regulatoryExposure.toFixed(2)}
@@ -157,6 +166,33 @@ export default function ResultsPanel({
                     )}
                     <div className="mt-4 text-[10px] text-slate-400 italic">
                         *Estimates based on distance decay and surface runoff fractions.
+                    </div>
+                </div>
+            </div>
+
+            <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-6 shadow-sm">
+                <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-amber-700 border-b border-amber-200 pb-2">
+                    How Penalty Risk Is Estimated
+                </h3>
+                <div className="grid gap-4 md:grid-cols-2">
+                    <div className="rounded-lg border border-amber-200 bg-white p-4">
+                        <p className="text-xs font-semibold text-amber-800 mb-2">Formula used</p>
+                        <p className="text-sm text-slate-700">
+                            Expected penalty per acre = Enforcement probability × $2,500 average fine ÷ 40 acres.
+                        </p>
+                        <p className="mt-3 text-xs text-slate-500">
+                            Current enforcement probability: {(enforcementProbability * 100).toFixed(1)}%
+                        </p>
+                    </div>
+                    <div className="rounded-lg border border-amber-200 bg-white p-4">
+                        <p className="text-xs font-semibold text-amber-800 mb-2">What is driving this risk</p>
+                        <ul className="space-y-1 text-sm text-slate-700">
+                            <li>Leaching probability: {(result.leachingProb * 100).toFixed(1)}%</li>
+                            <li>Rain forecast: {rainMm.toFixed(1)} mm (48h)</li>
+                            <li>Soil type: {soil} (retention affects N movement)</li>
+                            <li>Irrigation system: {irrigation}</li>
+                            <li>Wind speed: {windMph.toFixed(1)} mph {result.airborneFlag ? `(airborne warning: ${result.airborneFlag})` : ""}</li>
+                        </ul>
                     </div>
                 </div>
             </div>
