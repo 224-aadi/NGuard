@@ -13,7 +13,8 @@
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* ── Leaflet z-index containment ────────────────────────────────────── */
@@ -25,38 +26,61 @@ body {
 .risk-low {
   background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
   color: white;
+  border: 1px solid #15803d;
 }
+
 .risk-moderate {
   background: linear-gradient(135deg, #eab308 0%, #ca8a04 100%);
   color: white;
+  border: 1px solid #a16207;
 }
+
 .risk-high {
   background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%);
   color: white;
+  border: 1px solid #991b1b;
 }
 
 /* ── Metric card ────────────────────────────────────────────────────── */
 .metric-card {
   @apply rounded-xl border border-slate-200 bg-white p-5 shadow-sm;
-}
-.metric-card .label {
-  @apply text-xs font-semibold uppercase tracking-wider text-slate-500;
-}
-.metric-card .value {
-  @apply mt-1 text-2xl font-bold text-slate-900;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
-/* ── Memo ───────────────────────────────────────────────────────────── */
-.memo-panel {
-  @apply rounded-xl border border-slate-200 bg-white p-6 shadow-sm;
-  white-space: pre-wrap;
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 0.85rem;
-  line-height: 1.6;
+.metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+}
+
+.metric-card .label {
+  @apply text-xs font-bold uppercase tracking-wider text-slate-400 mb-1;
+}
+
+.metric-card .value {
+  @apply text-2xl font-black text-slate-800 tracking-tight;
+}
+
+/* ── Custom Scrollbar ───────────────────────────────────────────────── */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 20px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: #94a3b8;
 }
 
 /* ── Print CSS ──────────────────────────────────────────────────────── */
 @media print {
+
   /* Hide everything that's not the output */
   .no-print,
   .no-print * {
@@ -67,6 +91,19 @@ body {
     background: white;
     font-size: 11pt;
     line-height: 1.4;
+  }
+
+  #memo-section,
+  #results-section {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Ensure prose content prints nicely */
+  .prose {
+    max-width: none !important;
   }
 
   .metric-card {
@@ -80,11 +117,5 @@ body {
   .risk-high {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
-  }
-
-  .memo-panel {
-    border: 1px solid #ccc;
-    box-shadow: none;
-    page-break-before: always;
   }
 }

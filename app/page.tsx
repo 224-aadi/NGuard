@@ -2,60 +2,21 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
+import { FormState, CalcResult, WeatherInfo, StreamFeature } from "./types";
+import Header from "@/components/layout/Header";
+import WeatherWidget from "@/components/dashboard/WeatherWidget";
+import InputForm from "@/components/dashboard/InputForm";
+import ResultsPanel from "@/components/dashboard/ResultsPanel";
+import MemoPanel from "@/components/dashboard/MemoPanel";
 
 const LocationMap = dynamic(() => import("@/components/LocationMap"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-full items-center justify-center rounded-lg bg-slate-100 text-xs text-slate-400">
-      Loading map...
+    <div className="flex h-full min-h-[300px] items-center justify-center rounded-xl bg-slate-50 text-sm text-slate-400 border border-slate-100 animate-pulse">
+      Loading map engine...
     </div>
   ),
 });
-
-// ── Types ─────────────────────────────────────────────────────────────────
-interface FormState {
-  crop: string;
-  plannedYield: string;  // tons/acre
-  acreage: string;       // total field acres
-  prevN: string;
-  fertilizerForm: string;
-  soil: string;
-  irrigation: string;
-}
-
-interface CostBreakdown {
-  nLossLbs: number;
-  costPerLbN: number;
-  replacementCost: number;
-  reapplicationCost: number;
-  regulatoryExposure: number;
-  totalVarPerAcre: number;
-  fertilizerSource: string;
-  regulatorySource: string;
-}
-
-interface CalcResult {
-  baseN: number;
-  leachingProb: number;
-  airborneFlag: string | null;
-  riskCategory: "Low" | "Moderate" | "High Liability";
-  adjustedN: number;
-  directive: string;
-  varDollars: number;
-  totalFieldExposure: number;
-  costBreakdown: CostBreakdown;
-}
-
-interface WeatherInfo {
-  latitude: number;
-  longitude: number;
-  locationName: string;
-  rainMm: number;
-  tempC: number;
-  windMph: number;
-  humidity: number;
-  fetchedAt: string;
-}
 
 // ── Defaults ──────────────────────────────────────────────────────────────
 const defaultForm: FormState = {
@@ -68,9 +29,6 @@ const defaultForm: FormState = {
   irrigation: "Sprinkler",
 };
 
-
-
-// ═══════════════════════════════════════════════════════════════════════════
 export default function Dashboard() {
   const [form, setForm] = useState<FormState>(defaultForm);
   const [result, setResult] = useState<CalcResult | null>(null);
@@ -84,18 +42,17 @@ export default function Dashboard() {
   const [weather, setWeather] = useState<WeatherInfo | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState("");
-  const [cityInput, setCityInput] = useState("");
-  const [stateInput, setStateInput] = useState("");
   const [locationStatus, setLocationStatus] = useState<string>("Detecting location...");
   const [coords, setCoords] = useState<{ lat: number; lon: number }>({ lat: 36.7378, lon: -119.7871 });
   const autoRanRef = useRef(false);
+
   // Streams / waterways lookup
-  const [streams, setStreams] = useState<{ id: number; name: string; distanceMeters: number; estNlbs?: number }[]>([]);
+  const [streams, setStreams] = useState<StreamFeature[]>([]);
   const [streamsLoading, setStreamsLoading] = useState(false);
   const runoffFraction = 0.3; // default fraction of leached N reaching surface water
 
   // ── Helpers ────────────────────────────────────────────────────────────
-  const set = useCallback(
+  const handleFormChange = useCallback(
     (key: keyof FormState, value: string) =>
       setForm((prev) => ({ ...prev, [key]: value })),
     []
@@ -196,6 +153,13 @@ export default function Dashboard() {
       if (!res.ok) throw new Error(data.error || "Calculation failed");
       setResult(data as CalcResult);
       setMemo("");
+
+      // smooth scroll to results
+      setTimeout(() => {
+        const el = document.getElementById("results-section");
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 100);
+
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
@@ -224,8 +188,8 @@ export default function Dashboard() {
         if (!res.ok) throw new Error(data.error || 'Streams lookup failed');
 
         const features = data.features || [];
-        const acreage = parseFloat(form.acreage) || 0;
-        const totalLossLbs = (result.costBreakdown.nLossLbs || 0) * acreage;
+        const acreageVal = parseFloat(form.acreage) || 0;
+        const totalLossLbs = (result.costBreakdown.nLossLbs || 0) * acreageVal;
         const runoffToSurface = totalLossLbs * runoffFraction;
 
         const weights = features.map((f: any) => 1 / (f.distanceMeters || 1));
@@ -246,7 +210,7 @@ export default function Dashboard() {
       }
     })();
     return () => { cancelled = true; };
-  }, [result, coords, form.acreage]);
+  }, [result, coords, form.acreage, runoffFraction]);
 
   // ── Generate Memo ──────────────────────────────────────────────────────
   const genMemo = useCallback(async () => {
@@ -269,6 +233,13 @@ export default function Dashboard() {
       });
       const data2 = await res2.json();
       if (res2.ok) setResult(data2 as CalcResult);
+
+      // smooth scroll to memo
+      setTimeout(() => {
+        const el = document.getElementById("memo-section");
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 100);
+
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
@@ -276,9 +247,6 @@ export default function Dashboard() {
     }
   }, [payload]);
 
-  const exportPDF = useCallback(() => window.print(), []);
-
-  // ── Map click → fetch weather at clicked point ─────────────────────────
   const handleMapClick = useCallback(
     (clickLat: number, clickLon: number) => {
       fetchWeatherByCoords(clickLat, clickLon);
@@ -286,412 +254,91 @@ export default function Dashboard() {
     [fetchWeatherByCoords]
   );
 
+  const handleGpsClick = () => {
+    navigator.geolocation?.getCurrentPosition(
+      (pos) => fetchWeatherByCoords(pos.coords.latitude, pos.coords.longitude),
+      () => setWeatherError("Location access denied")
+    );
+  };
 
-  const riskClass = result
-    ? result.riskCategory === "High Liability"
-      ? "risk-high"
-      : result.riskCategory === "Moderate"
-      ? "risk-moderate"
-      : "risk-low"
-    : "";
-
-  const inputClass = "mt-1 block w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm focus:border-blue-500 focus:ring-blue-500";
-
-  // ═════════════════════════════════════════════════════════════════════════
   return (
-    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      {/* ── Title ─────────────────────────────────────────────────────── */}
-      <header className="mb-6 text-center no-print">
-        <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">
-          🛡️ N-Guard: Nitrogen Risk Analysis
-        </h1>
-        <p className="mt-2 text-sm text-slate-500">
-          Agricultural Nitrogen Management & Compliance Engine
-        </p>
-      </header>
+    <div className="min-h-screen bg-slate-50/50 pb-20">
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
 
-      {/* ── Location / Weather Bar + Map ─────────────────────────────── */}
-      <div className="no-print mb-6 grid gap-4 md:grid-cols-[1fr_280px]">
-        <div className="rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50 to-sky-50 p-4 shadow-sm">
-          <div className="flex flex-col gap-3">
-            {/* Live weather readout */}
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-lg">📍</span>
-              <div className="min-w-0">
-                <div className="text-sm font-semibold text-slate-700 truncate">
-                  {weatherLoading ? "Fetching forecast..." : locationStatus}
-                </div>
-                {weather && (
-                  <div className="text-xs text-slate-500">
-                    Live: {weather.tempC}°C · {weather.windMph} mph wind · {weather.rainMm} mm rain (48h) · {weather.humidity}% humidity
-                    <span className="ml-2 text-slate-400">
-                      Updated {new Date(weather.fetchedAt).toLocaleTimeString()}
-                    </span>
-                  </div>
-                )}
-                {weatherError && (
-                  <div className="text-xs text-red-500">{weatherError}</div>
-                )}
-              </div>
-            </div>
+        <Header />
 
-            {/* City + State search */}
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="City (e.g. Davis, Paris, Tokyo)"
-                value={cityInput}
-                onChange={(e) => setCityInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") fetchWeatherByCity(cityInput, stateInput);
-                }}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm flex-1 focus:border-blue-500 focus:ring-blue-500"
-              />
-              <input
-                type="text"
-                placeholder="State / Country (optional)"
-                value={stateInput}
-                onChange={(e) => setStateInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") fetchWeatherByCity(cityInput, stateInput);
-                }}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm w-44 focus:border-blue-500 focus:ring-blue-500"
-              />
-              <button
-                onClick={() => fetchWeatherByCity(cityInput, stateInput)}
-                disabled={weatherLoading || !cityInput.trim()}
-                className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
-              >
-                {weatherLoading ? "..." : "Fetch"}
-              </button>
-              <button
-                onClick={() => {
-                  navigator.geolocation?.getCurrentPosition(
-                    (pos) => fetchWeatherByCoords(pos.coords.latitude, pos.coords.longitude),
-                    () => setWeatherError("Location access denied")
-                  );
-                }}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-                title="Use my location"
-              >
-                📍 GPS
-              </button>
+        {/* ── Top Section: Map & Weather ─────────────────────────────── */}
+        <div className="no-print mb-8 grid gap-6 lg:grid-cols-[2fr_1fr]">
+          {/* Map Column */}
+          <div className="order-2 lg:order-1 h-[400px] rounded-xl border border-slate-200 shadow-sm overflow-hidden bg-white relative group">
+            <LocationMap
+              lat={coords.lat}
+              lon={coords.lon}
+              locationName={locationStatus}
+              onMapClick={handleMapClick}
+            />
+            <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-1 text-xs font-semibold rounded-md shadow-sm border border-slate-200 pointer-events-none">
+              field_view_sat_v4
             </div>
+            <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur px-3 py-1 text-[10px] text-slate-500 rounded-md shadow-sm border border-slate-200 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+              Click map to relocate
+            </div>
+          </div>
 
-            <div className="text-[10px] text-slate-400">
-              {coords.lat.toFixed(4)}, {coords.lon.toFixed(4)} · Type a city, use GPS, or click/drag on the map
-            </div>
+          {/* Weather Column */}
+          <div className="order-1 lg:order-2">
+            <WeatherWidget
+              weather={weather}
+              loading={weatherLoading}
+              error={weatherError}
+              locationStatus={locationStatus}
+              onCitySearch={fetchWeatherByCity}
+              onGpsClick={handleGpsClick}
+            />
           </div>
         </div>
 
-        {/* Map — click anywhere to select a location */}
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden" style={{ minHeight: "240px" }}>
-          <LocationMap
-            lat={coords.lat}
-            lon={coords.lon}
-            locationName={locationStatus}
-            onMapClick={handleMapClick}
+        {/* ── Input Section ───────────────────────────────────────────── */}
+        <div className="no-print mb-10">
+          <InputForm
+            form={form}
+            onChange={handleFormChange}
+            loading={loading}
+            weather={weather}
+            onRunAnalysis={runAnalysis}
+            onGenerateMemo={genMemo}
+            memoLoading={memoLoading}
           />
         </div>
-      </div>
 
-      {/* ── Input Panel (2-column: Field + Environment) ───────────────── */}
-      <section className="no-print mb-8 grid gap-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:grid-cols-2">
-        {/* Col 1: Field */}
-        <div className="space-y-4">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400">
-            Field
-          </h2>
-
-          <label className="block">
-            <span className="text-xs font-medium text-slate-600">Crop</span>
-            <select value={form.crop} onChange={(e) => set("crop", e.target.value)} className={inputClass}>
-              <option>Corn</option>
-              <option>Wheat</option>
-              <option>Almonds</option>
-              <option>Lettuce</option>
-            </select>
-          </label>
-
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block">
-              <span className="text-xs font-medium text-slate-600">
-                Planned Yield (tons/acre)
-              </span>
-              <input
-                type="number"
-                min="0"
-                step="0.1"
-                value={form.plannedYield}
-                onChange={(e) => set("plannedYield", e.target.value)}
-                className={inputClass}
-              />
-            </label>
-            <label className="block">
-              <span className="text-xs font-medium text-slate-600">
-                Field Size (acres)
-              </span>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={form.acreage}
-                onChange={(e) => set("acreage", e.target.value)}
-                className={inputClass}
-              />
-            </label>
+        {/* ── Error Banner ────────────────────────────────────────────── */}
+        {error && (
+          <div className="no-print mb-8 rounded-xl border border-red-200 bg-red-50 p-4 flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
+            <div className="text-red-500">❌</div>
+            <div className="text-sm font-medium text-red-700">{error}</div>
           </div>
+        )}
 
-          <label className="block">
-            <span className="text-xs font-medium text-slate-600">
-              Previous N Applied (lbs/acre)
-            </span>
-            <input
-              type="number"
-              min="0"
-              value={form.prevN}
-              onChange={(e) => set("prevN", e.target.value)}
-              className={inputClass}
+        {/* ── Results & Memo ──────────────────────────────────────────── */}
+        <div className="space-y-12">
+          {result && (
+            <ResultsPanel
+              result={result}
+              streams={streams}
+              streamsLoading={streamsLoading}
+              acreage={form.acreage}
             />
-          </label>
+          )}
 
-          <label className="block">
-            <span className="text-xs font-medium text-slate-600">Fertilizer Form</span>
-            <select value={form.fertilizerForm} onChange={(e) => set("fertilizerForm", e.target.value)} className={inputClass}>
-              <option>Liquid UAN (Spray)</option>
-              <option>Dry Urea (Broadcast)</option>
-            </select>
-          </label>
-        </div>
-
-        {/* Col 2: Environment */}
-        <div className="space-y-4">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400">
-            Environment
-          </h2>
-
-          <label className="block">
-            <span className="text-xs font-medium text-slate-600">Soil Type</span>
-            <select value={form.soil} onChange={(e) => set("soil", e.target.value)} className={inputClass}>
-              <option>Clay</option>
-              <option>Loam</option>
-              <option>Sandy</option>
-            </select>
-          </label>
-
-          <label className="block">
-            <span className="text-xs font-medium text-slate-600">Irrigation</span>
-            <select value={form.irrigation} onChange={(e) => set("irrigation", e.target.value)} className={inputClass}>
-              <option>Drip</option>
-              <option>Sprinkler</option>
-              <option>Flood</option>
-            </select>
-          </label>
-
-          {/* Live weather summary (read-only) */}
-          {weather && (
-            <div className="rounded-lg border border-green-200 bg-green-50 p-3">
-              <div className="mb-1 text-[10px] font-semibold uppercase text-green-600">
-                Live Forecast (auto-fetched)
-              </div>
-              <div className="grid grid-cols-3 gap-2 text-sm">
-                <div>
-                  <div className="text-[10px] text-green-500">Rain (48h)</div>
-                  <div className="font-bold text-slate-800">{weather.rainMm} mm</div>
-                </div>
-                <div>
-                  <div className="text-[10px] text-green-500">Temp</div>
-                  <div className="font-bold text-slate-800">{weather.tempC}°C</div>
-                </div>
-                <div>
-                  <div className="text-[10px] text-green-500">Wind</div>
-                  <div className="font-bold text-slate-800">{weather.windMph} mph</div>
-                </div>
-              </div>
-            </div>
+          {memo && (
+            <MemoPanel
+              memo={memo}
+              source={memoSource}
+            />
           )}
         </div>
-      </section>
 
-      {/* ── Buttons ───────────────────────────────────────────────────── */}
-      <div className="no-print mb-8 flex flex-wrap gap-3 justify-center">
-        <button
-          onClick={runAnalysis}
-          disabled={loading}
-          className="rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-blue-700 disabled:opacity-50"
-        >
-          {loading ? "Computing..." : "Run Analysis"}
-        </button>
-        <button
-          onClick={genMemo}
-          disabled={memoLoading}
-          className="rounded-lg bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-emerald-700 disabled:opacity-50"
-        >
-          {memoLoading ? "Generating..." : "Generate Compliance Memo"}
-        </button>
-        <button
-          onClick={exportPDF}
-          className="rounded-lg border border-slate-300 bg-white px-6 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-        >
-          Export PDF
-        </button>
       </div>
-
-      {/* ── Error ─────────────────────────────────────────────────────── */}
-      {error && (
-        <div className="no-print mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {error}
-        </div>
-      )}
-
-      {/* ── Results ───────────────────────────────────────────────────── */}
-      {result && (
-        <div id="results-section">
-          {/* Metric Cards */}
-          <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            <div className="metric-card">
-              <div className="label">Estimated N Leached (lbs/acre)</div>
-              <div className="value text-red-700">{result.costBreakdown.nLossLbs.toFixed(2)}</div>
-              <div className="text-[10px] text-slate-500 mt-0.5">Total: {(result.costBreakdown.nLossLbs * (parseFloat(form.acreage) || 0)).toFixed(0)} lbs</div>
-            </div>
-            <div className="metric-card">
-              <div className="label">Base N (lbs/acre)</div>
-              <div className="value">{result.baseN.toFixed(2)}</div>
-            </div>
-            <div className="metric-card">
-              <div className="label">Adjusted N (lbs/acre)</div>
-              <div className="value text-blue-700">{result.adjustedN.toFixed(2)}</div>
-            </div>
-            <div className="metric-card">
-              <div className="label">Leaching Probability</div>
-              <div className="value">{(result.leachingProb * 100).toFixed(1)}%</div>
-            </div>
-            <div className="metric-card">
-              <div className="label">Estimated Exposure ($/acre)</div>
-              <div className="value text-amber-700">${result.varDollars.toFixed(2)}</div>
-            </div>
-          </div>
-
-          {/* Nearby Streams (surface water exposure) */}
-          <div className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-slate-400">
-              Nearby Streams & Estimated N Input
-            </h3>
-            {streamsLoading ? (
-              <div className="text-sm text-slate-500">Looking up waterways near the selected location...</div>
-            ) : streams.length === 0 ? (
-              <div className="text-sm text-slate-500">No nearby streams found within 5 km.</div>
-            ) : (
-              <div className="grid gap-2">
-                {streams.map((s) => (
-                  <div key={s.id} className="flex items-center justify-between rounded-md border border-slate-100 bg-slate-50 p-2">
-                    <div>
-                      <div className="text-sm font-medium text-slate-700">{s.name}</div>
-                      <div className="text-[11px] text-slate-500">{(s.distanceMeters/1000).toFixed(2)} km away</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm font-bold text-red-700">{(s.estNlbs || 0).toFixed(2)} lbs</div>
-                      <div className="text-[11px] text-slate-500">Estimated to stream</div>
-                    </div>
-                  </div>
-                ))}
-                <div className="text-[11px] text-slate-500">Assumes {Math.round(runoffFraction*100)}% of leached N reaches surface waters; distributed by proximity.</div>
-              </div>
-            )}
-          </div>
-
-          {/* Cost Breakdown */}
-          <div className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-slate-400">
-              Economic Exposure Breakdown
-            </h3>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-              <div className="rounded-lg bg-slate-50 p-3">
-                <div className="text-[10px] font-semibold uppercase text-slate-400">N Replacement</div>
-                <div className="mt-1 text-lg font-bold text-slate-800">
-                  ${result.costBreakdown.replacementCost.toFixed(2)}
-                </div>
-                <div className="text-[10px] text-slate-500">
-                  {result.costBreakdown.nLossLbs.toFixed(1)} lbs × ${result.costBreakdown.costPerLbN.toFixed(2)}/lb
-                </div>
-              </div>
-              <div className="rounded-lg bg-slate-50 p-3">
-                <div className="text-[10px] font-semibold uppercase text-slate-400">Re-Application</div>
-                <div className="mt-1 text-lg font-bold text-slate-800">
-                  ${result.costBreakdown.reapplicationCost.toFixed(2)}
-                </div>
-                <div className="text-[10px] text-slate-500">Custom rate survey</div>
-              </div>
-              <div className="rounded-lg bg-slate-50 p-3">
-                <div className="text-[10px] font-semibold uppercase text-slate-400">Regulatory Risk</div>
-                <div className="mt-1 text-lg font-bold text-amber-700">
-                  ${result.costBreakdown.regulatoryExposure.toFixed(2)}
-                </div>
-                <div className="text-[10px] text-slate-500">Expected penalty (regulatory)</div>
-              </div>
-              <div className="rounded-lg bg-blue-50 border border-blue-200 p-3">
-                <div className="text-[10px] font-semibold uppercase text-blue-500">Per-Acre Exposure</div>
-                <div className="mt-1 text-lg font-extrabold text-blue-800">
-                  ${result.costBreakdown.totalVarPerAcre.toFixed(2)}
-                </div>
-                <div className="text-[10px] text-blue-500">Estimated</div>
-              </div>
-              <div className="rounded-lg bg-red-50 border border-red-200 p-3">
-                <div className="text-[10px] font-semibold uppercase text-red-500">Total Field</div>
-                <div className="mt-1 text-lg font-extrabold text-red-800">
-                  ${result.totalFieldExposure.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </div>
-                <div className="text-[10px] text-red-500">{parseFloat(form.acreage) || 0} acres</div>
-              </div>
-            </div>
-            <div className="mt-3 text-[10px] text-slate-400">
-              Sources: {result.costBreakdown.fertilizerSource} · {result.costBreakdown.regulatorySource}
-            </div>
-          </div>
-
-          {/* Risk Banner */}
-          <div className={`mb-6 rounded-xl p-5 shadow-md ${riskClass}`}>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <span className="text-lg font-extrabold uppercase tracking-wide">
-                  {result.riskCategory}
-                </span>
-                <p className="mt-1 text-sm font-medium opacity-90">
-                  {result.directive}
-                </p>
-              </div>
-              {result.airborneFlag && (
-                <div className="rounded-lg bg-white/20 px-4 py-2 text-sm font-bold backdrop-blur">
-                  ⚠️ {result.airborneFlag}
-                </div>
-              )}
-            </div>
-          </div>
-
-
-        </div>
-      )}
-
-      {/* ── Memo Panel ────────────────────────────────────────────────── */}
-      {memo && (
-        <div id="memo-section">
-          <div className="no-print mb-2 flex items-center gap-2">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400">
-              Compliance Memo
-            </h3>
-            {memoSource === "ai-enhanced" ? (
-              <span className="inline-flex items-center rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-medium text-purple-700">
-                AI-Enhanced
-              </span>
-            ) : (
-              <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
-                Template
-              </span>
-            )}
-          </div>
-          <div className="memo-panel">{memo}</div>
-        </div>
-      )}
     </div>
   );
 }

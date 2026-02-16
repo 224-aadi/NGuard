@@ -1,15 +1,15 @@
 import { NextResponse } from "next/server";
 import { validateInputs, computeNGuard, generateMemo } from "@/lib/nguard";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// Groq: free tier, no credit card, OpenAI-compatible API
-// Sign up at https://console.groq.com → get free API key
-const GROQ_API_KEY = process.env.GROQ_API_KEY ?? "";
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? "";
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 /**
  * POST /api/memo
  *
  * Always generates a template-based compliance memo.
- * If GROQ_API_KEY is set in .env.local, enhances with Llama 3.3 70B (free).
+ * If GEMINI_API_KEY is set in .env.local, enhances with Gemini 1.5 Flash.
  */
 export async function POST(request: Request) {
   try {
@@ -20,17 +20,18 @@ export async function POST(request: Request) {
     // 1. Template memo (always works, zero dependencies)
     const templateMemo = generateMemo(inputs, outputs);
 
-    // 2. If Groq key is available, enhance with LLM
-    if (GROQ_API_KEY) {
+    // 2. If Gemini key is available, enhance with LLM
+    if (GEMINI_API_KEY) {
       try {
-        const enhanced = await enhanceWithGroq(templateMemo, inputs, outputs);
+        const enhanced = await enhanceWithGemini(templateMemo, inputs, outputs);
         if (enhanced) {
           return NextResponse.json({
             memo: enhanced,
             source: "ai-enhanced",
           });
         }
-      } catch {
+      } catch (error) {
+        console.error("Gemini API Error:", error);
         // LLM failed — fall through to template
       }
     }
@@ -45,8 +46,8 @@ export async function POST(request: Request) {
   }
 }
 
-// ── Groq LLM Enhancement (free tier — Llama 3.3 70B) ────────────────────
-async function enhanceWithGroq(
+// ── Gemini LLM Enhancement ──────────────────────────────────────────────
+async function enhanceWithGemini(
   templateMemo: string,
   inputs: { crop: string; soil: string; fertilizerForm: string },
   outputs: {
@@ -56,41 +57,25 @@ async function enhanceWithGroq(
     airborneFlag: string | null;
   }
 ): Promise<string | null> {
-  const systemPrompt = `You are an agricultural compliance analyst specializing in nitrogen management and nutrient runoff risk assessment.
+  // Use gemini-flash-latest for best free tier availability
+  const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
-Your task: take the following template-generated nitrogen risk assessment memo and rewrite it into polished, professional prose. You MUST:
-- Preserve ALL numerical values, calculations, cost breakdowns, and data EXACTLY as given
-- Keep the economic breakdown table formatted exactly as-is
-- Improve prose quality, flow, and professional tone
-- Add relevant regulatory citations where appropriate (Clean Water Act, state nutrient management laws)
-- Maintain the same section structure
-- Make it suitable for a regulatory filing or compliance documentation
+  const systemPrompt = `You are an agricultural compliance analyst. Rewrite the provided memo into a professional Markdown document.
 
-Output ONLY the rewritten memo text. No commentary, no preamble.`;
+Your task: take the provided template-generated nitrogen risk assessment memo and rewrite it into a polished, professional document using Markdown formatting.
 
-  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${GROQ_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: "llama-3.3-70b-versatile",
-      temperature: 0.3,
-      max_tokens: 4000,
-      messages: [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: `Here is the template memo to enhance:\n\n${templateMemo}\n\nContext:\n- Crop: ${inputs.crop}\n- Soil: ${inputs.soil}\n- Fertilizer: ${inputs.fertilizerForm}\n- Risk: ${outputs.riskCategory}\n- Leaching probability: ${(outputs.leachingProb * 100).toFixed(1)}%\n- VaR: $${outputs.varDollars.toFixed(2)}/acre\n- Airborne flag: ${outputs.airborneFlag || "none"}`,
-        },
-      ],
-    }),
-  });
+You MUST:
+- Preserve ALL numerical values, calculations, and financial figures EXACTLY as given in the template. Do not recalculate.
+- Use Markdown headers (###), bolding (**text**), and bullet points to improve readability.
+- Maintain a professional, authoritative tone suitable for regulatory filing.
+- Include a specific "Regulatory Context" section citing relevant frameworks (e.g., Nitrogen Management Plan guidelines).
+- Keep the economic breakdown clear and easy to read.
 
-  if (!res.ok) return null;
+Output ONLY the rewritten markdown text. Do not include any introductory or concluding remarks outside the report content.`;
 
-  const data = await res.json();
-  const content = data.choices?.[0]?.message?.content;
-  return content || null;
+  const userPrompt = `Here is the template memo to enhance: \n\n${templateMemo} \n\nContext: \n - Crop: ${inputs.crop} \n - Soil: ${inputs.soil} \n - Fertilizer: ${inputs.fertilizerForm} \n - Risk: ${outputs.riskCategory} \n - Leaching probability: ${(outputs.leachingProb * 100).toFixed(1)}%\n - VaR: $${outputs.varDollars.toFixed(2)}/acre`;
+
+  const result = await model.generateContent([systemPrompt, userPrompt]);
+  const response = await result.response;
+  return response.text();
 }
