@@ -1,5 +1,5 @@
 import React from 'react';
-import { FormState, WeatherInfo } from '@/app/types';
+import { FieldFilesEstimate, FormState, WeatherInfo } from '@/app/types';
 
 interface InputFormProps {
     form: FormState;
@@ -9,6 +9,14 @@ interface InputFormProps {
     onRunAnalysis: () => void;
     onGenerateMemo: () => void;
     memoLoading: boolean;
+    tiffFileName: string;
+    polygonFileName: string;
+    onTiffFileSelected: (file: File) => void;
+    onPolygonFileSelected: (file: File) => void;
+    onProcessFieldFiles: () => void;
+    fieldFilesLoading: boolean;
+    fieldFilesEstimate: FieldFilesEstimate | null;
+    fieldFilesError: string;
 }
 
 export default function InputForm({
@@ -19,6 +27,14 @@ export default function InputForm({
     onRunAnalysis,
     onGenerateMemo,
     memoLoading,
+    tiffFileName,
+    polygonFileName,
+    onTiffFileSelected,
+    onPolygonFileSelected,
+    onProcessFieldFiles,
+    fieldFilesLoading,
+    fieldFilesEstimate,
+    fieldFilesError,
 }: InputFormProps) {
     const inputClass = "w-full rounded-lg border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-blue-500 focus:ring-blue-500 transition-colors";
 
@@ -46,6 +62,62 @@ export default function InputForm({
                         <p className="text-[10px] text-slate-400 mt-1">
                             Choose the crop you are planning to fertilize.
                         </p>
+                    </div>
+
+                    <div className="rounded-lg border border-blue-100 bg-blue-50 p-3">
+                        <label className="block text-xs font-semibold text-blue-900 mb-1">
+                            Main Field TIFF
+                        </label>
+                        <input
+                            type="file"
+                            accept=".tif,.tiff,image/tiff"
+                            onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) onTiffFileSelected(file);
+                            }}
+                            className="w-full rounded-md border border-blue-200 bg-white px-2 py-2 text-xs text-slate-700"
+                        />
+                        <p className="mt-1 text-[11px] text-slate-600 truncate">{tiffFileName || "No TIFF selected"}</p>
+                    </div>
+
+                    <div className="rounded-lg border border-blue-100 bg-blue-50 p-3">
+                        <label className="block text-xs font-semibold text-blue-900 mb-1">
+                            Polygon Boundary File
+                        </label>
+                        <input
+                            type="file"
+                            accept=".zip,.shp,.geojson,.json,.csv,.tsv,.txt"
+                            onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) onPolygonFileSelected(file);
+                            }}
+                            className="w-full rounded-md border border-blue-200 bg-white px-2 py-2 text-xs text-slate-700"
+                        />
+                        <p className="mt-1 text-[11px] text-slate-600 truncate">{polygonFileName || "No polygon file selected"}</p>
+                    </div>
+
+                    <div className="rounded-lg border border-blue-100 bg-blue-50 p-3">
+                        <button
+                            type="button"
+                            onClick={onProcessFieldFiles}
+                            disabled={fieldFilesLoading || !tiffFileName || !polygonFileName}
+                            className="inline-flex rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                        >
+                            {fieldFilesLoading ? "Processing files..." : "Process TIFF + Polygon"}
+                        </button>
+                        <p className="mt-2 text-[10px] text-blue-800">
+                            Upload both files, then process to auto-fill acreage and weather location.
+                        </p>
+                        {fieldFilesEstimate && (
+                            <div className="mt-2 rounded-md border border-blue-200 bg-white p-2 text-[11px] text-slate-700">
+                                <div><span className="font-semibold">Chosen area:</span> {fieldFilesEstimate.chosenAreaAcres.toFixed(2)} acres (from polygon)</div>
+                                <div><span className="font-semibold">TIFF area:</span> {fieldFilesEstimate.tiff.areaAcres.toFixed(2)} acres</div>
+                                <div><span className="font-semibold">Polygon points:</span> {fieldFilesEstimate.polygon.pointCount}</div>
+                            </div>
+                        )}
+                        {fieldFilesError && (
+                            <p className="mt-2 text-[11px] text-red-600">{fieldFilesError}</p>
+                        )}
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">

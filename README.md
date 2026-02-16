@@ -31,7 +31,8 @@ Key files
 APIs
 
 - `POST /api/calc` — calculation engine (payload: crop, plannedYield, acreage, prevN, fertilizerForm, soil, irrigation, rainMm, tempC, windMph)
-- `POST /api/weather` — fetch live forecast for coords or city
+- `POST /api/field-area` — process `multipart/form-data` with `tiffFile` + `polygonFile` to estimate acreage and derive centroid
+- `POST /api/weather` — fetch live forecast for coords
 - `POST /api/memo` — generate compliance memo
 - `GET  /api/streams?lat={lat}&lon={lon}&radius={meters}` — returns nearby waterways from Overpass. Response JSON: `{ features: [{ id, name, centroid: {lat,lon}, distanceMeters }, ...] }`
 
@@ -40,6 +41,18 @@ Example streams API call:
 ```
 curl "http://localhost:3000/api/streams?lat=36.7378&lon=-119.7871&radius=5000"
 ```
+
+Example field file processing call:
+
+```bash
+curl -X POST "http://localhost:3000/api/field-area" \
+  -F "tiffFile=@/path/to/field.tif" \
+  -F "polygonFile=@/path/to/boundary.zip"
+```
+
+Notes for polygon upload:
+- Supported: `.zip` (recommended), `.shp`, `.geojson`, `.json`, `.csv/.tsv/.txt`
+- For ZIP shapefiles include at least `.shp`, and ideally `.dbf` (for lon/lat attributes) + `.prj` (for units)
 
 How stream N estimates are computed
 

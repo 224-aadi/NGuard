@@ -48,3 +48,31 @@ export interface StreamFeature {
   distanceMeters: number;
   estNlbs?: number;
 }
+
+export interface FieldFilesEstimate {
+  chosenAreaAcres: number;
+  chosenAreaSqMeters: number;
+  centroid: {
+    lat: number;
+    lon: number;
+  };
+  tiff: {
+    fileName: string;
+    areaAcres: number;
+    areaSqMeters: number;
+    width: number;
+    height: number;
+    pixelSizeX: number;
+    pixelSizeY: number;
+    units: string;
+    warnings?: string[];
+  };
+  polygon: {
+    fileName: string;
+    source: string;
+    areaAcres: number;
+    areaSqMeters: number;
+    ringCount: number;
+    pointCount: number;
+  };
+}

@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
-import { FormState, CalcResult, WeatherInfo, StreamFeature } from "./types";
+import { FormState, CalcResult, WeatherInfo, StreamFeature, FieldFilesEstimate } from "./types";
 import Header from "@/components/layout/Header";
 import WeatherWidget from "@/components/dashboard/WeatherWidget";
 import InputForm from "@/components/dashboard/InputForm";
@@ -38,6 +38,11 @@ export default function Dashboard() {
   const [insights, setInsights] = useState<string>("");
   const [insightsSource, setInsightsSource] = useState<string>("");
   const [insightsLoading, setInsightsLoading] = useState(false);
+  const [tiffFile, setTiffFile] = useState<File | null>(null);
+  const [polygonFile, setPolygonFile] = useState<File | null>(null);
+  const [fieldFilesLoading, setFieldFilesLoading] = useState(false);
+  const [fieldFilesError, setFieldFilesError] = useState("");
+  const [fieldFilesEstimate, setFieldFilesEstimate] = useState<FieldFilesEstimate | null>(null);
   const [loading, setLoading] = useState(false);
   const [memoLoading, setMemoLoading] = useState(false);
   const [error, setError] = useState<string>("");
@@ -46,7 +51,7 @@ export default function Dashboard() {
   const [weather, setWeather] = useState<WeatherInfo | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState("");
-  const [locationStatus, setLocationStatus] = useState<string>("Detecting location...");
+  const [locationStatus, setLocationStatus] = useState<string>("Waiting for field files...");
   const [coords, setCoords] = useState<{ lat: number; lon: number }>({ lat: 36.7378, lon: -119.7871 });
   const autoRanRef = useRef(false);
 
@@ -103,45 +108,37 @@ export default function Dashboard() {
     }
   }, []);
 
-  const fetchWeatherByCity = useCallback(async (city: string, state: string) => {
-    const query = [city, state].filter(Boolean).join(", ");
-    if (!query.trim()) return;
-    setWeatherLoading(true);
-    setWeatherError("");
-    try {
-      const res = await fetch("/api/weather", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ city: query }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Weather fetch failed");
-      setWeather(data as WeatherInfo);
-      setCoords({ lat: data.latitude, lon: data.longitude });
-      setLocationStatus(data.locationName || query);
-    } catch (e: unknown) {
-      setWeatherError(e instanceof Error ? e.message : "Weather fetch failed");
-      setLocationStatus("Weather unavailable");
-    } finally {
-      setWeatherLoading(false);
-    }
-  }, []);
-
-  // ── Auto-detect on mount ───────────────────────────────────────────────
-  useEffect(() => {
-    if (!navigator.geolocation) {
-      setLocationStatus("Geolocation not supported — enter city below");
+  const processFieldFiles = useCallback(async () => {
+    if (!tiffFile || !polygonFile) {
+      setFieldFilesError("Please select both TIFF and polygon files.");
       return;
     }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => fetchWeatherByCoords(pos.coords.latitude, pos.coords.longitude),
-      () => {
-        setLocationStatus("Location denied — using default");
-        fetchWeatherByCoords(36.7378, -119.7871);
-      },
-      { timeout: 8000 }
-    );
-  }, [fetchWeatherByCoords]);
+    setFieldFilesLoading(true);
+    setFieldFilesError("");
+    setFieldFilesEstimate(null);
+    try {
+      const fd = new FormData();
+      fd.append("tiffFile", tiffFile);
+      fd.append("polygonFile", polygonFile);
+      const res = await fetch("/api/field-area", {
+        method: "POST",
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to process field files.");
+      const estimate = data as FieldFilesEstimate;
+      setFieldFilesEstimate(estimate);
+      setForm((prev) => ({ ...prev, acreage: String(estimate.chosenAreaAcres) }));
+      setCoords(estimate.centroid);
+      setLocationStatus(`Derived from files (${estimate.centroid.lat.toFixed(4)}, ${estimate.centroid.lon.toFixed(4)})`);
+      autoRanRef.current = false;
+      await fetchWeatherByCoords(estimate.centroid.lat, estimate.centroid.lon);
+    } catch (e: unknown) {
+      setFieldFilesError(e instanceof Error ? e.message : "Failed to process field files.");
+    } finally {
+      setFieldFilesLoading(false);
+    }
+  }, [tiffFile, polygonFile, fetchWeatherByCoords]);
 
   // ── Run Analysis ───────────────────────────────────────────────────────
   const runAnalysis = useCallback(async () => {
@@ -277,20 +274,6 @@ export default function Dashboard() {
     }
   }, [payload]);
 
-  const handleMapClick = useCallback(
-    (clickLat: number, clickLon: number) => {
-      fetchWeatherByCoords(clickLat, clickLon);
-    },
-    [fetchWeatherByCoords]
-  );
-
-  const handleGpsClick = () => {
-    navigator.geolocation?.getCurrentPosition(
-      (pos) => fetchWeatherByCoords(pos.coords.latitude, pos.coords.longitude),
-      () => setWeatherError("Location access denied")
-    );
-  };
-
   return (
     <div className="min-h-screen bg-slate-50/50 pb-20">
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -305,13 +288,13 @@ export default function Dashboard() {
               lat={coords.lat}
               lon={coords.lon}
               locationName={locationStatus}
-              onMapClick={handleMapClick}
+              editable={false}
             />
             <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-1 text-xs font-semibold rounded-md shadow-sm border border-slate-200 pointer-events-none">
               field_view_sat_v4
             </div>
             <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur px-3 py-1 text-[10px] text-slate-500 rounded-md shadow-sm border border-slate-200 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
-              Click map to relocate
+              Center is derived from uploaded files
             </div>
           </div>
 
@@ -322,8 +305,6 @@ export default function Dashboard() {
               loading={weatherLoading}
               error={weatherError}
               locationStatus={locationStatus}
-              onCitySearch={fetchWeatherByCity}
-              onGpsClick={handleGpsClick}
             />
           </div>
         </div>
@@ -338,6 +319,14 @@ export default function Dashboard() {
             onRunAnalysis={runAnalysis}
             onGenerateMemo={genMemo}
             memoLoading={memoLoading}
+            tiffFileName={tiffFile?.name || ""}
+            polygonFileName={polygonFile?.name || ""}
+            onTiffFileSelected={setTiffFile}
+            onPolygonFileSelected={setPolygonFile}
+            onProcessFieldFiles={processFieldFiles}
+            fieldFilesLoading={fieldFilesLoading}
+            fieldFilesEstimate={fieldFilesEstimate}
+            fieldFilesError={fieldFilesError}
           />
         </div>
 

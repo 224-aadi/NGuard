@@ -10,9 +10,10 @@ interface LocationMapProps {
   locationName: string;
   /** Called when user clicks anywhere on the map to drop a pin */
   onMapClick?: (lat: number, lon: number) => void;
+  editable?: boolean;
 }
 
-export default function LocationMap({ lat, lon, locationName, onMapClick }: LocationMapProps) {
+export default function LocationMap({ lat, lon, locationName, onMapClick, editable = true }: LocationMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markerRef = useRef<L.Marker | null>(null);
@@ -62,22 +63,26 @@ export default function LocationMap({ lat, lon, locationName, onMapClick }: Loca
       maxZoom: 18,
     }).addTo(map);
 
-    const marker = L.marker([lat, lon], { draggable: true })
+    const marker = L.marker([lat, lon], { draggable: editable })
       .addTo(map)
       .bindPopup(`<b>${locationName}</b><br/>📍 ${lat.toFixed(4)}, ${lon.toFixed(4)}`)
       .openPopup();
 
     // Click on map → drop pin
-    map.on("click", handleClick);
+    if (editable) {
+      map.on("click", handleClick);
+    }
 
     // Drag marker → same as click
-    marker.on("dragend", () => {
-      const pos = marker.getLatLng();
-      marker
-        .setPopupContent(`<b>Selected Location</b><br/>📍 ${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}<br/><i>Fetching weather...</i>`)
-        .openPopup();
-      onMapClickRef.current?.(pos.lat, pos.lng);
-    });
+    if (editable) {
+      marker.on("dragend", () => {
+        const pos = marker.getLatLng();
+        marker
+          .setPopupContent(`<b>Selected Location</b><br/>📍 ${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)}<br/><i>Fetching weather...</i>`)
+          .openPopup();
+        onMapClickRef.current?.(pos.lat, pos.lng);
+      });
+    }
 
     mapInstanceRef.current = map;
     markerRef.current = marker;
@@ -111,7 +116,7 @@ export default function LocationMap({ lat, lon, locationName, onMapClick }: Loca
         style={{ minHeight: "200px" }}
       />
       <div className="absolute bottom-2 left-2 z-[1000] rounded bg-white/90 px-2 py-1 text-[9px] text-slate-500 shadow-sm pointer-events-none">
-        Click map or drag pin to select location
+        {editable ? "Click map or drag pin to select location" : "Location is derived from uploaded field files"}
       </div>
     </div>
   );
